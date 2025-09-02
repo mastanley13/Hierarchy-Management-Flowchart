@@ -147,12 +147,41 @@ npm run typecheck    # Run TypeScript checks
 - Large hierarchies may take longer to load initially
 - Consider adjusting `PAGE_LIMIT` for your data size
 
+## Deployment to Vercel
+
+### 1. Push to GitHub
+
+First, push your project to a GitHub repository.
+
+### 2. Connect to Vercel
+
+1. Create an account on [Vercel](https://vercel.com)
+2. Click "New Project" and import your GitHub repository
+3. Configure the project:
+   - Framework Preset: Vite
+   - Build Command: `npm run build`
+   - Output Directory: `dist`
+
+### 3. Environment Variables
+
+Add the following environment variables in Vercel:
+
+- `VITE_SURELC_USER` - Your SureLC username
+- `VITE_SURELC_PASS` - Your SureLC password
+- `VITE_FIRM_ID` - Your firm ID
+
+For sensitive information, use [Vercel's encrypted environment variables](https://vercel.com/docs/concepts/projects/environment-variables).
+
+### 4. Deploy
+
+Click "Deploy" and Vercel will build and deploy your application.
+
 ## Security Notes
 
 - Never commit your `.env` file to version control
 - The system avoids displaying PII like SSN or sensitive producer data
 - API credentials are handled securely through environment variables
-- Consider using a backend proxy in production for additional security
+- The application uses a serverless function to proxy API requests in production
 
 ## Next Steps
 

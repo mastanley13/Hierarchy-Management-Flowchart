@@ -20,8 +20,10 @@ export async function getJSON<T>(path: string, token: string): Promise<T> {
   
   // Create the request promise
   const requestPromise = (async () => {
-    // Use proxy in development, direct URL in production
-    const baseUrl = import.meta.env.DEV ? '/api' : (import.meta.env.VITE_SURELC_BASE || 'https://surelc.surancebay.com/sbweb/ws');
+    // Use local proxy in development, serverless function in production
+    const baseUrl = import.meta.env.DEV 
+      ? '/api' 
+      : (import.meta.env.VITE_API_PROXY || '/api/proxy?path=');
     const res = await fetch(`${baseUrl}${path}`, {
       headers: { 
         'Authorization': token,

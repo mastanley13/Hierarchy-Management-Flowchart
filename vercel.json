@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "routes": [
+    {
+      "src": "/api/proxy",
+      "dest": "/api/proxy.js"
+    },
+    {
+      "handle": "filesystem"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
+  ],
+  "env": {
+    "VITE_SURELC_USER": "@surelc_user",
+    "VITE_SURELC_PASS": "@surelc_pass",
+    "VITE_FIRM_ID": "@firm_id"
+  }
+}
