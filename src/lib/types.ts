@@ -39,6 +39,7 @@ export type ChartTree = {
     upline?: string;
     errors?: string;
     warnings?: string;
+    needsNameFetch?: boolean;
   };
   children?: ChartTree[];
 };

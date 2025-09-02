@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import OrgChart from './components/OrgChart';
 import { createAuthToken } from './lib/api';
 import './App.css';
@@ -7,7 +7,7 @@ function App() {
   const [selectedProducerId, setSelectedProducerId] = useState<number | null>(null);
 
   // Get configuration from environment variables
-  const firmId = parseInt(import.meta.env.VITE_FIRM_ID || '0');
+  const firmId = parseInt(import.meta.env.VITE_FIRM_ID || '323'); // Default to firm 323
   const initialDate = import.meta.env.VITE_INITIAL_SNAPSHOT_DATE || '2000-01-01T00:00:00Z';
   const pageLimit = parseInt(import.meta.env.VITE_PAGE_LIMIT || '500');
 

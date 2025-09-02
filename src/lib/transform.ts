@@ -1,84 +1,160 @@
 import type { GARelation, ChartTree, ProducerLabel } from './types';
-import { fetchProducerLabel } from './api';
 
-export async function relationsToChart(
+export function relationsToChart(
   firmId: number,
   relations: GARelation[],
-  labelCache: Map<number, ProducerLabel>,
-  token: string
-): Promise<ChartTree> {
-  // Group relations by branch code
-  const byBranch = new Map<string, GARelation[]>();
-  
+  labelCache: Map<number, ProducerLabel>
+): ChartTree {
   console.log(`Processing ${relations.length} relations for firm ${firmId}`);
   
-  for (const relation of relations) {
-    if (relation.gaId !== firmId) continue; // Only include relations for our firm
-    
-    const branchKey = relation.branchCode?.trim() || 'Unassigned';
-    if (!byBranch.has(branchKey)) {
-      byBranch.set(branchKey, []);
-    }
-    byBranch.get(branchKey)!.push(relation);
-  }
+  // Filter relations for our firm
+  const firmRelations = relations.filter(r => r.gaId === firmId);
+  console.log(`Found ${firmRelations.length} relations for firm ${firmId}`);
   
-  console.log(`Grouped into ${byBranch.size} branches:`, Array.from(byBranch.keys()));
+  // Build hierarchy based on upline relationships
+  return buildHierarchyTree(firmId, firmRelations, labelCache);
+}
 
-  // Create producer nodes WITHOUT fetching individual names (fast loading)
-  function createProducerNodes(relations: GARelation[]): ChartTree[] {
-    const producerNodes: ChartTree[] = [];
+function buildHierarchyTree(
+  firmId: number,
+  relations: GARelation[],
+  labelCache: Map<number, ProducerLabel>
+): ChartTree {
+  // Create a map of producerId to relation for quick lookup
+  const relationMap = new Map<number, GARelation>();
+  relations.forEach(relation => {
+    relationMap.set(relation.producerId, relation);
+  });
+
+  // Create hierarchy mapping: upline -> children
+  const hierarchyMap = new Map<string, ChartTree[]>(); // upline -> children
+
+  console.log('Building hierarchy from upline relationships...');
+  
+  // First, create all producer nodes
+  const allProducerNodes = new Map<number, ChartTree>();
+  
+  relations.forEach(relation => {
+    const cachedLabel = labelCache.get(relation.producerId);
+    const displayName = cachedLabel?.name || `Agent ${relation.producerId}`;
     
-    for (const relation of relations) {
-      // Use cached label if available, otherwise use placeholder
-      const cachedLabel = labelCache.get(relation.producerId);
-      const displayName = cachedLabel?.name || `Agent ${relation.producerId}`;
+    const producerNode: ChartTree = {
+      id: `producer:${relation.producerId}`,
+      label: displayName,
+      type: 'producer',
+      badges: {
+        status: relation.status,
+        hasErrors: !!relation.errors?.trim(),
+        hasWarnings: !!relation.warnings?.trim()
+      },
+      meta: {
+        producerId: relation.producerId,
+        gaId: relation.gaId,
+        branchCode: relation.branchCode,
+        upline: relation.upline,
+        errors: relation.errors,
+        warnings: relation.warnings,
+        needsNameFetch: !cachedLabel || cachedLabel.name.startsWith('Agent ')
+      },
+      children: []
+    };
+    
+    allProducerNodes.set(relation.producerId, producerNode);
+  });
 
-      producerNodes.push({
-        id: `producer:${relation.producerId}`,
-        label: displayName,
-        type: 'producer',
-        badges: {
-          status: relation.status,
-          hasErrors: !!relation.errors?.trim(),
-          hasWarnings: !!relation.warnings?.trim()
-        },
-        meta: {
-          producerId: relation.producerId,
-          gaId: relation.gaId,
-          branchCode: relation.branchCode,
-          upline: relation.upline,
-          errors: relation.errors,
-          warnings: relation.warnings,
-          needsNameFetch: !cachedLabel // Flag to indicate name needs fetching
+  // Group by upline to build hierarchy
+  relations.forEach(relation => {
+    const uplineKey = relation.upline?.trim() || 'ROOT';
+    
+    if (!hierarchyMap.has(uplineKey)) {
+      hierarchyMap.set(uplineKey, []);
+    }
+    
+    const producerNode = allProducerNodes.get(relation.producerId);
+    if (producerNode) {
+      hierarchyMap.get(uplineKey)!.push(producerNode);
+    }
+  });
+
+  console.log('Hierarchy groups:', Array.from(hierarchyMap.keys()));
+
+  // Build the tree recursively
+  function buildSubTree(uplineKey: string, level: number = 0): ChartTree[] {
+    const children = hierarchyMap.get(uplineKey) || [];
+    const result: ChartTree[] = [];
+    
+    for (const child of children) {
+      // Find this producer's downline (children)
+      const childUplineKey = child.meta?.producerId?.toString();
+      if (childUplineKey) {
+        const grandChildren = buildSubTree(childUplineKey, level + 1);
+        child.children = grandChildren;
+      }
+      
+      result.push(child);
+    }
+    
+    return result;
+  }
+
+  // Get root level producers (those with no upline or upline not in our data)
+  const rootProducers = buildSubTree('ROOT');
+  
+  // Also check for producers whose upline is not in our dataset
+  relations.forEach(relation => {
+    if (relation.upline && relation.upline.trim()) {
+      // Check if upline exists as a producer in our data
+      const uplineExists = relations.some(r => r.producerId.toString() === relation.upline?.trim());
+      if (!uplineExists) {
+        // This producer's upline is external, so they should be at root level
+        const producerNode = allProducerNodes.get(relation.producerId);
+        if (producerNode && !rootProducers.some(p => p.id === producerNode.id)) {
+          const childUplineKey = relation.producerId.toString();
+          const grandChildren = buildSubTree(childUplineKey);
+          producerNode.children = grandChildren;
+          rootProducers.push(producerNode);
         }
-      });
+      }
     }
+  });
 
-    return producerNodes;
-  }
-
-  // Create branch nodes (process first 10 branches only for initial load)
-  const branchEntries = Array.from(byBranch.entries());
-  const branchesToProcess = branchEntries.slice(0, 10); // Limit to first 10 branches for faster loading
-  console.log(`Processing ${branchesToProcess.length} branches out of ${branchEntries.length} total`);
+  // If we have a complex hierarchy, organize by branch and then by upline
+  const branchGroups = new Map<string, ChartTree[]>();
   
+  // Group root producers by branch
+  rootProducers.forEach(producer => {
+    const branchCode = producer.meta?.branchCode || 'Unassigned';
+    if (!branchGroups.has(branchCode)) {
+      branchGroups.set(branchCode, []);
+    }
+    branchGroups.get(branchCode)!.push(producer);
+  });
+
+  // Create branch nodes with hierarchical children
   const branchNodes: ChartTree[] = [];
-  for (const [branchCode, branchRelations] of branchesToProcess) {
-    const producerNodes = createProducerNodes(branchRelations); // No await needed now!
+  for (const [branchCode, producers] of branchGroups.entries()) {
+    const branchLabel = branchCode === 'Unassigned' ? 'Unassigned Agents' : `${branchCode}`;
     
     branchNodes.push({
       id: `branch:${branchCode}`,
-      label: branchCode === 'Unassigned' ? 'Unassigned' : `${branchCode}`,
+      label: branchLabel,
       type: 'branch',
       meta: { branchCode },
-      children: producerNodes
+      children: producers
     });
   }
 
   // Create root agency node
+  let firmName = `FIRM ${firmId}`;
+  if (firmId === 1756822500362) {
+    firmName = 'SURANCEBAY INSURANCE FIRM';
+  } else if (firmId === 323) {
+    firmName = 'FIRM 323 - AGENCY';
+  }
+  
   return {
     id: `ga:${firmId}`,
-    label: `MY AGENCY`,
+    label: firmName,
     type: 'agency',
     meta: { gaId: firmId },
     children: branchNodes
@@ -123,9 +199,8 @@ export function searchTreeByNPN(tree: ChartTree, targetNPN: string, labelCache: 
 export function updateTreeWithNewRelations(
   existingTree: ChartTree,
   newRelations: GARelation[],
-  labelCache: Map<number, ProducerLabel>,
-  token: string
-): Promise<ChartTree> {
+  labelCache: Map<number, ProducerLabel>
+): ChartTree {
   // For simplicity, rebuild the entire tree with combined relations
   // In a production app, you might want more sophisticated merging
   const firmId = existingTree.meta?.gaId;
@@ -133,7 +208,7 @@ export function updateTreeWithNewRelations(
     throw new Error('Cannot update tree: missing firm ID');
   }
 
-  return relationsToChart(firmId, newRelations, labelCache, token);
+  return relationsToChart(firmId, newRelations, labelCache);
 }
 
 export function countNodes(tree: ChartTree): { agencies: number; branches: number; producers: number } {

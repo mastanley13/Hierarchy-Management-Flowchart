@@ -5,23 +5,54 @@ export const authHeader = (user: string, pass: string): string =>
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
+// Request cache to prevent duplicate API calls
+const requestCache = new Map<string, Promise<any>>();
+const cacheTimeout = 30000; // 30 seconds cache
+
 export async function getJSON<T>(path: string, token: string): Promise<T> {
-  // Use proxy in development, direct URL in production
-  const baseUrl = import.meta.env.DEV ? '/api' : (import.meta.env.VITE_SURELC_BASE || 'https://surelc.surancebay.com/sbweb/ws');
-  const res = await fetch(`${baseUrl}${path}`, {
-    headers: { 
-      'Authorization': token,
-      'Accept': 'application/json',
-      'Content-Type': 'application/json'
-    }
-  });
+  const cacheKey = `${path}:${token}`;
   
-  if (!res.ok) {
-    const errorText = await res.text();
-    throw new Error(`HTTP ${res.status}: ${errorText}`);
+  // Check if we have a cached request in progress
+  if (requestCache.has(cacheKey)) {
+    console.log(`Using cached request for: ${path}`);
+    return requestCache.get(cacheKey)!;
   }
   
-  return res.json() as Promise<T>;
+  // Create the request promise
+  const requestPromise = (async () => {
+    // Use proxy in development, direct URL in production
+    const baseUrl = import.meta.env.DEV ? '/api' : (import.meta.env.VITE_SURELC_BASE || 'https://surelc.surancebay.com/sbweb/ws');
+    const res = await fetch(`${baseUrl}${path}`, {
+      headers: { 
+        'Authorization': token,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`HTTP ${res.status}: ${errorText}`);
+    }
+    
+    return res.json() as Promise<T>;
+  })();
+  
+  // Cache the request
+  requestCache.set(cacheKey, requestPromise);
+  
+  // Clear cache after timeout
+  setTimeout(() => {
+    requestCache.delete(cacheKey);
+  }, cacheTimeout);
+  
+  try {
+    return await requestPromise;
+  } catch (error) {
+    // Remove failed request from cache immediately
+    requestCache.delete(cacheKey);
+    throw error;
+  }
 }
 
 export async function fetchFirmRelationsAfter(
