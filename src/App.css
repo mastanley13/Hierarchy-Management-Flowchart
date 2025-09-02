@@ -1,0 +1,83 @@
+#root {
+  margin: 0;
+  padding: 0;
+  min-height: 100vh;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.App {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+}
+
+.app-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  padding: 2rem;
+  text-align: center;
+  background: #f8f9fa;
+}
+
+.app-error h1 {
+  color: #dc3545;
+  margin-bottom: 1rem;
+}
+
+.app-error p {
+  color: #6c757d;
+  margin-bottom: 1rem;
+  max-width: 600px;
+  line-height: 1.5;
+}
+
+.app-error ul {
+  text-align: left;
+  color: #495057;
+  max-width: 400px;
+}
+
+.app-error li {
+  margin-bottom: 0.5rem;
+  font-family: monospace;
+  background: #e9ecef;
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+}
+
+.producer-details-panel {
+  position: fixed;
+  top: 50%;
+  right: 2rem;
+  transform: translateY(-50%);
+  width: 300px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  z-index: 1000;
+}
+
+.producer-details-panel h3 {
+  margin: 0 0 1rem 0;
+  color: #2c3e50;
+}
+
+.producer-details-panel button {
+  background: #dc3545;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 1rem;
+}
+
+.producer-details-panel button:hover {
+  background: #c82333;
+}
+

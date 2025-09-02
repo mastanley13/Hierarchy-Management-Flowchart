@@ -1,0 +1,347 @@
+/* Org Chart Styles - Matching the flowchart example */
+
+.org-chart-container {
+  width: 100%;
+  height: 100vh;
+  background: #f8f9fa;
+  display: flex;
+  flex-direction: column;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Header Styles */
+.org-chart-header {
+  background: white;
+  padding: 1rem 2rem;
+  border-bottom: 2px solid #e9ecef;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.org-chart-header h1 {
+  margin: 0 0 1rem 0;
+  color: #2c3e50;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
+.controls {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.search-section {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.search-input {
+  padding: 0.5rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  width: 200px;
+  font-size: 0.9rem;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0,123,255,0.25);
+}
+
+.search-button, .refresh-button {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: all 0.2s;
+}
+
+.search-button:hover, .refresh-button:hover {
+  background: #f8f9fa;
+  border-color: #007bff;
+}
+
+.search-button:disabled, .refresh-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.stats {
+  display: flex;
+  gap: 2rem;
+  font-size: 0.9rem;
+  color: #6c757d;
+}
+
+/* Content Area */
+.org-chart-content {
+  flex: 1;
+  padding: 2rem;
+  overflow: auto;
+  background: #f8f9fa;
+}
+
+.error-message {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  background: #f8d7da;
+  border: 1px solid #f5c6cb;
+  border-radius: 4px;
+  color: #721c24;
+  margin-bottom: 1rem;
+}
+
+.loading-message {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2rem;
+  justify-content: center;
+  font-size: 1.1rem;
+  color: #6c757d;
+}
+
+/* Org Tree Structure */
+.org-tree {
+  display: flex;
+  justify-content: center;
+  min-width: fit-content;
+}
+
+.org-node {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin: 0.5rem;
+}
+
+.node-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 150px;
+  position: relative;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Node styling based on type - matching flowchart colors */
+.org-node.agency .node-content {
+  background: #6c757d;
+  color: white;
+  font-weight: 600;
+  font-size: 1.1rem;
+  min-width: 200px;
+  border: 2px solid #495057;
+}
+
+.org-node.branch .node-content {
+  background: #343a40;
+  color: white;
+  font-weight: 500;
+  min-width: 180px;
+  border: 2px solid #212529;
+}
+
+.org-node.producer .node-content {
+  background: #343a40;
+  color: white;
+  font-size: 0.9rem;
+  min-width: 120px;
+  border: 2px solid #212529;
+}
+
+/* Hover effects */
+.node-content:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+}
+
+.org-node.agency .node-content:hover {
+  background: #5a6268;
+}
+
+.org-node.branch .node-content:hover {
+  background: #23272b;
+}
+
+.org-node.producer .node-content:hover {
+  background: #23272b;
+}
+
+/* Selected state */
+.node-content.selected {
+  background: #007bff !important;
+  border-color: #0056b3 !important;
+  box-shadow: 0 0 0 3px rgba(0,123,255,0.25);
+}
+
+/* Node icons */
+.node-icon {
+  display: flex;
+  align-items: center;
+}
+
+/* Node badges */
+.node-badges {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.status-badge {
+  background: rgba(255,255,255,0.2);
+  color: white;
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  text-transform: uppercase;
+}
+
+.error-badge {
+  color: #dc3545;
+  background: white;
+  border-radius: 50%;
+  padding: 1px;
+}
+
+.warning-badge {
+  color: #ffc107;
+  background: white;
+  border-radius: 50%;
+  padding: 1px;
+}
+
+/* Children layout */
+.node-children {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1rem;
+  margin-top: 2rem;
+  position: relative;
+}
+
+/* Connection lines - similar to flowchart */
+.org-node.agency::after {
+  content: '';
+  position: absolute;
+  bottom: -1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 1rem;
+  background: #6c757d;
+}
+
+.org-node.branch::after {
+  content: '';
+  position: absolute;
+  bottom: -1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 1rem;
+  background: #6c757d;
+}
+
+/* Horizontal connector for multiple branches */
+.node-children::before {
+  content: '';
+  position: absolute;
+  top: -1rem;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: #6c757d;
+  z-index: -1;
+}
+
+/* Vertical connectors for children */
+.node-children > .org-node::before {
+  content: '';
+  position: absolute;
+  top: -1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 1rem;
+  background: #6c757d;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .org-chart-header {
+    padding: 1rem;
+  }
+  
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+  
+  .stats {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .search-input {
+    width: 100%;
+  }
+  
+  .node-content {
+    min-width: 100px;
+    font-size: 0.8rem;
+  }
+  
+  .org-node.agency .node-content {
+    min-width: 150px;
+  }
+  
+  .org-node.branch .node-content {
+    min-width: 130px;
+  }
+}
+
+/* Animation for spinning refresh icon */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spin 1s linear infinite;
+}
+
+/* Tooltips for badges */
+.error-badge:hover::after,
+.warning-badge:hover::after {
+  content: attr(title);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.9);
+  color: white;
+  padding: 0.5rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+  z-index: 1000;
+  margin-bottom: 5px;
+}
