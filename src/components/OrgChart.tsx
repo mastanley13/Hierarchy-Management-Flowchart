@@ -5,6 +5,8 @@ import type { ChartTree, GARelation, ProducerLabel, OrgChartProps } from '../lib
 import { fetchFirmRelationsAfter, fetchProducerByNPN, createAuthToken } from '../lib/api';
 import { relationsToChart, searchTreeByNPN, countNodes } from '../lib/transform';
 import { loadProducerNamesProgressively } from '../lib/progressive-loader';
+// Temporarily disable virtualization to fix import issues
+// We'll implement custom virtualization if needed
 
 interface OrgChartState {
   tree: ChartTree | null;
@@ -27,7 +29,7 @@ interface OrgChartState {
 const OrgChart: React.FC<OrgChartProps> = ({
   firmId,
   initialDate = '2000-01-01T00:00:00Z',
-  pageLimit = 500,
+  pageLimit = 10000, // Increased limit to fetch more producers
   onSelectProducer
 }) => {
   const [state, setState] = useState<OrgChartState>({
@@ -51,6 +53,11 @@ const OrgChart: React.FC<OrgChartProps> = ({
   const labelCacheRef = useRef(new Map<number, ProducerLabel>());
   const relationsRef = useRef<GARelation[]>([]);
   const isLoadingRef = useRef(false);
+
+  // Removed virtualization constants as we're not using react-window anymore
+
+  // We no longer need this since we're using on-demand loading
+  // const lastNameUpdateRef = useRef(0);
 
   const loadHierarchyData = useCallback(async (fromDate?: string) => {
     const dateToUse = fromDate || initialDate;
@@ -131,59 +138,69 @@ const OrgChart: React.FC<OrgChartProps> = ({
         error: null,
         collapsedNodes: initialCollapsedNodes
       }));
-
-      // Start progressive loading of producer names in background
-      if (tree && tree.children && tree.children.length > 0) {
-        console.log('Starting progressive name loading...');
+      
+      // Only load names for the root agency node initially
+      if (tree && tree.type === 'agency') {
+        console.log('Loading names for root agency node only');
         
-        // Count total producers needing names
-        const totalProducers = countProducersNeedingNames(tree);
-        setState(prev => ({ 
-          ...prev, 
-          loadingProgress: { 
-            total: totalProducers, 
-            loaded: 0, 
-            isLoading: totalProducers > 0 
-          } 
-        }));
+        // Count producers at the root level that need names
+        let rootLevelProducers = 0;
+        if (tree.children) {
+          tree.children.forEach(branch => {
+            if (branch.type === 'producer' && branch.meta?.needsNameFetch) {
+              rootLevelProducers++;
+            }
+          });
+        }
         
-        let loadedCount = 0;
-        loadProducerNamesProgressively(
-          tree,
-          labelCacheRef.current,
-          token,
-          (updatedTree) => {
-            loadedCount += 5; // Updated every 5 names
+        if (rootLevelProducers > 0) {
+          setState(prev => ({ 
+            ...prev, 
+            loadingProgress: { 
+              total: rootLevelProducers, 
+              loaded: 0, 
+              isLoading: true 
+            } 
+          }));
+          
+          // Only load names for the root level producers
+          loadProducerNamesProgressively(
+            tree,
+            labelCacheRef.current,
+            token,
+            (updatedTree) => {
+              setState(prev => ({ 
+                ...prev, 
+                tree: updatedTree,
+                loadingProgress: {
+                  ...prev.loadingProgress,
+                  loaded: Math.min(prev.loadingProgress.loaded + 5, rootLevelProducers),
+                  isLoading: prev.loadingProgress.loaded < rootLevelProducers
+                }
+              }));
+            },
+            4, // modest concurrency
+            tree.id // Only load for the root node
+          ).then(() => {
             setState(prev => ({ 
               ...prev, 
-              tree: updatedTree,
               loadingProgress: {
                 ...prev.loadingProgress,
-                loaded: Math.min(loadedCount, totalProducers),
-                isLoading: loadedCount < totalProducers
+                loaded: rootLevelProducers,
+                isLoading: false
               }
             }));
-          },
-          2 // Very conservative: only 2 concurrent API calls to respect rate limits
-        ).then(() => {
-          setState(prev => ({ 
-            ...prev, 
-            loadingProgress: {
-              ...prev.loadingProgress,
-              loaded: totalProducers,
-              isLoading: false
-            }
-          }));
-        }).catch(error => {
-          console.warn('Progressive loading failed:', error);
-          setState(prev => ({ 
-            ...prev, 
-            loadingProgress: {
-              ...prev.loadingProgress,
-              isLoading: false
-            }
-          }));
-        });
+          }).catch(error => {
+            console.warn('Progressive loading failed:', error);
+            setState(prev => ({ 
+              ...prev, 
+              loadingProgress: {
+                ...prev.loadingProgress,
+                isLoading: false
+              }
+            }));
+          });
+        }
       }
 
     } catch (error) {
@@ -198,32 +215,129 @@ const OrgChart: React.FC<OrgChartProps> = ({
     }
   }, [firmId, pageLimit]); // Removed initialDate to prevent infinite re-renders
 
-  // Helper function to count producers needing names
-  const countProducersNeedingNames = (tree: ChartTree): number => {
-    let count = 0;
-    function traverse(node: ChartTree) {
-      if (node.type === 'producer' && node.meta?.needsNameFetch) {
-        count++;
-      }
-      if (node.children) {
-        node.children.forEach(traverse);
-      }
-    }
-    traverse(tree);
-    return count;
-  };
+  // We're now counting producers on-demand when branches are expanded
+  // so we don't need this function anymore
 
-  const toggleNodeCollapse = useCallback((nodeId: string) => {
-    setState(prev => {
-      const newCollapsed = new Set(prev.collapsedNodes);
-      if (newCollapsed.has(nodeId)) {
-        newCollapsed.delete(nodeId);
-      } else {
-        newCollapsed.add(nodeId);
+  const toggleNodeCollapse = useCallback((nodeId: string, node: ChartTree) => {
+    try {
+      const isCollapsed = state.collapsedNodes.has(nodeId);
+      
+      // First toggle collapsed state to ensure UI responsiveness
+      setState(prev => {
+        const newCollapsed = new Set(prev.collapsedNodes);
+        if (newCollapsed.has(nodeId)) {
+          newCollapsed.delete(nodeId);
+        } else {
+          newCollapsed.add(nodeId);
+        }
+        return { ...prev, collapsedNodes: newCollapsed };
+      });
+      
+      // If we're expanding a node, check if we need to load producer names
+      if (isCollapsed && node && node.children && node.children.length > 0) {
+        // Validate node structure before proceeding
+        if (!node.id || !node.type) {
+          console.error('Invalid node structure:', node);
+          return;
+        }
+        
+        // Check if this branch has producers that need name loading
+        const hasProducersNeedingNames = node.children.some(child => 
+          child.type === 'producer' && child.meta?.needsNameFetch
+        );
+        
+        if (hasProducersNeedingNames) {
+          console.log(`Loading names for expanded node ${nodeId}`);
+          
+          try {
+            // Start loading names for this branch
+            const token = createAuthToken();
+            
+            // Count producers needing names in this subtree
+            let subtreeProducersCount = 0;
+            const countProducersInSubtree = (n: ChartTree) => {
+              if (n.type === 'producer' && n.meta?.needsNameFetch) {
+                subtreeProducersCount++;
+              }
+              if (n.children) {
+                n.children.forEach(countProducersInSubtree);
+              }
+            };
+            
+            try {
+              countProducersInSubtree(node);
+            } catch (countError) {
+              console.error('Error counting producers:', countError);
+              return;
+            }
+            
+            // Only update state if we found producers to load
+            if (subtreeProducersCount > 0) {
+              setState(prev => ({ 
+                ...prev, 
+                loadingProgress: { 
+                  total: subtreeProducersCount,
+                  loaded: 0,
+                  isLoading: true 
+                } 
+              }));
+              
+              // Load names for this specific subtree
+              loadProducerNamesProgressively(
+                state.tree!,
+                labelCacheRef.current,
+                token,
+                (updatedTree) => {
+                  setState(prev => ({ 
+                    ...prev, 
+                    tree: updatedTree,
+                    loadingProgress: {
+                      ...prev.loadingProgress,
+                      loaded: Math.min(prev.loadingProgress.loaded + 5, subtreeProducersCount)
+                    }
+                  }));
+                },
+                4, // concurrency
+                nodeId // Only load names for this subtree
+              ).then(() => {
+                setState(prev => ({ 
+                  ...prev, 
+                  loadingProgress: {
+                    ...prev.loadingProgress,
+                    loaded: subtreeProducersCount,
+                    isLoading: false
+                  }
+                }));
+              }).catch(error => {
+                console.error('Error loading producer names:', error);
+                setState(prev => ({ 
+                  ...prev, 
+                  loadingProgress: {
+                    ...prev.loadingProgress,
+                    isLoading: false
+                  }
+                }));
+              });
+            }
+          } catch (loadError) {
+            console.error('Error setting up name loading:', loadError);
+          }
+        }
       }
-      return { ...prev, collapsedNodes: newCollapsed };
-    });
-  }, []);
+    } catch (error) {
+      console.error('Error in toggleNodeCollapse:', error);
+      // Ensure UI remains responsive even if there's an error
+      setState(prev => {
+        const newCollapsed = new Set(prev.collapsedNodes);
+        if (newCollapsed.has(nodeId)) {
+          newCollapsed.delete(nodeId);
+        } else {
+          newCollapsed.add(nodeId);
+        }
+        return { ...prev, collapsedNodes: newCollapsed };
+      });
+    }
+  }, [state.tree, state.collapsedNodes]);
 
   const handleRefresh = useCallback(async () => {
     await loadHierarchyData(state.lastRefresh);
@@ -267,7 +381,9 @@ const OrgChart: React.FC<OrgChartProps> = ({
               }
               return false;
             };
-            expandParents(state.tree, foundNode.id);
+            if (state.tree) {
+              expandParents(state.tree, foundNode.id);
+            }
           }
           
           setState(prev => ({ 
@@ -302,6 +418,11 @@ const OrgChart: React.FC<OrgChartProps> = ({
 
   // Filter function for nodes
   const shouldShowNode = useCallback((node: ChartTree): boolean => {
+    // Safety check for valid node
+    if (!node || !node.type) {
+      return false;
+    }
+    
     // Always show agency and branch nodes
     if (node.type === 'agency' || node.type === 'branch') return true;
     
@@ -330,23 +451,44 @@ const OrgChart: React.FC<OrgChartProps> = ({
     loadHierarchyData();
   }, []); // Empty dependency array - only run once on mount
 
-  const renderFlowchartNode = (node: ChartTree, level: number = 0): React.ReactElement | null => {
-    if (!shouldShowNode(node) && node.type === 'producer') {
-      return null;
+  const renderFlowchartNode = (node: ChartTree, level: number = 0): React.ReactElement => {
+    // Safety check for malformed nodes
+    if (!node || !node.type || !node.id) {
+      console.error('Invalid node encountered:', node);
+      return <div key={`error-${Math.random()}`} className="tree-node tree-node--error">Invalid Node</div>;
     }
+    
+    if (!shouldShowNode(node) && node.type === 'producer') {
+      return <div key={node.id} className="tree-node tree-node--hidden" style={{ display: 'none' }}>Hidden</div>;
+    }
+    
+    // Ensure node has required properties
+    const nodeId = node.id;
+    const nodeType = node.type;
+    const nodeLabel = node.label || 'Unnamed Node';
+    
     const isSelected = node.meta?.producerId === state.selectedProducerId;
     const hasChildren = node.children && node.children.length > 0;
-    const isCollapsed = state.collapsedNodes.has(node.id);
+    const isCollapsed = state.collapsedNodes.has(nodeId);
     const shouldShowChildren = hasChildren && !isCollapsed;
-    const isLoadingName = node.type === 'producer' && node.meta?.needsNameFetch;
+    const isLoadingName = nodeType === 'producer' && node.meta?.needsNameFetch;
     
-    // Filter children
-    const visibleChildren = node.children?.filter(child => shouldShowNode(child) || child.type !== 'producer') || [];
+    // Filter children and ensure they are valid nodes
+    const visibleChildren = node.children?.filter(child => {
+      // First check if child exists and has required properties
+      if (!child || !child.id || !child.type || !child.label) {
+        console.warn('Filtering out invalid child node:', child);
+        return false;
+      }
+      
+      // Then check if it should be shown
+      return shouldShowNode(child) || child.type !== 'producer';
+    }) || [];
     
     // For agency (root) node
-    if (node.type === 'agency') {
+    if (nodeType === 'agency') {
       return (
-        <div key={node.id} id={node.id} className={`tree-node tree-node--${node.type} tree-node--level-${level}`}>
+        <div key={nodeId} id={nodeId} className={`tree-node tree-node--${nodeType} tree-node--level-${level} ${hasChildren ? 'has-children' : ''}`}>
           <div 
             className={`tree-node__content ${
               isSelected ? 'tree-node__content--selected' : ''
@@ -360,7 +502,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
                 className="tree-node__toggle"
                 onClick={(e) => {
                   e.stopPropagation();
-                  toggleNodeCollapse(node.id);
+                  toggleNodeCollapse(node.id, node);
                 }}
                 aria-label={isCollapsed ? 'Expand' : 'Collapse'}
               >
@@ -377,7 +519,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
               className="tree-node__main"
               onClick={() => {
                 if (hasChildren) {
-                  toggleNodeCollapse(node.id);
+                  toggleNodeCollapse(node.id, node);
                 }
               }}
             >
@@ -386,7 +528,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
               </div>
               
               <div className="tree-node__label">
-                <span className="tree-node__title">{node.label}</span>
+                <span className="tree-node__title">{nodeLabel}</span>
                 {hasChildren && (
                   <span className="tree-node__count">
                     {visibleChildren.length} branch{visibleChildren.length !== 1 ? 'es' : ''}
@@ -400,7 +542,14 @@ const OrgChart: React.FC<OrgChartProps> = ({
           {shouldShowChildren && visibleChildren.length > 0 && (
             <div className="tree-node__children">
               <div className="branches-container">
-                {visibleChildren.map(child => renderFlowchartNode(child, level + 1))}
+{visibleChildren.map(child => {
+                  // Safety check for valid child node
+                  if (!child || !child.id || !child.type) {
+                    console.error('Invalid child node:', child);
+                    return <div key={`invalid-${Math.random()}`}>Invalid node</div>;
+                  }
+                  return renderFlowchartNode(child, level + 1);
+                })}
               </div>
             </div>
           )}
@@ -409,9 +558,9 @@ const OrgChart: React.FC<OrgChartProps> = ({
     }
     
     // For branch node
-    if (node.type === 'branch') {
+    if (nodeType === 'branch') {
       return (
-        <div key={node.id} id={node.id} className={`tree-node tree-node--${node.type} tree-node--level-${level}`}>
+        <div key={nodeId} id={nodeId} className={`tree-node tree-node--${nodeType} tree-node--level-${level} ${hasChildren ? 'has-children' : ''}`}>
           <div 
             className={`tree-node__content ${
               isSelected ? 'tree-node__content--selected' : ''
@@ -425,7 +574,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
                 className="tree-node__toggle"
                 onClick={(e) => {
                   e.stopPropagation();
-                  toggleNodeCollapse(node.id);
+                  toggleNodeCollapse(node.id, node);
                 }}
                 aria-label={isCollapsed ? 'Expand' : 'Collapse'}
               >
@@ -442,7 +591,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
               className="tree-node__main"
               onClick={() => {
                 if (hasChildren) {
-                  toggleNodeCollapse(node.id);
+                  toggleNodeCollapse(node.id, node);
                 }
               }}
             >
@@ -451,7 +600,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
               </div>
               
               <div className="tree-node__label">
-                <span className="tree-node__title">{node.label}</span>
+                <span className="tree-node__title">{nodeLabel}</span>
                 {hasChildren && (
                   <span className="tree-node__count">
                     {visibleChildren.length} agent{visibleChildren.length !== 1 ? 's' : ''}
@@ -467,12 +616,26 @@ const OrgChart: React.FC<OrgChartProps> = ({
               {level === 1 ? (
                 // For branch level, use grid layout for direct children
                 <div className="producers-container">
-                  {visibleChildren.map(child => renderFlowchartNode(child, level + 1))}
+                  {visibleChildren.map(child => {
+                    // Safety check for valid child node
+                    if (!child || !child.id || !child.type) {
+                      console.error('Invalid child node in map:', child);
+                      return <div key={`invalid-${Math.random()}`}>Invalid node</div>;
+                    }
+                    return renderFlowchartNode(child, level + 1);
+                  })}
                 </div>
               ) : (
                 // For deeper levels, use vertical hierarchy
                 <div className="hierarchy-children">
-                  {visibleChildren.map(child => renderFlowchartNode(child, level + 1))}
+                  {visibleChildren.map(child => {
+                    // Safety check for valid child node
+                    if (!child || !child.id || !child.type) {
+                      console.error('Invalid child node in map:', child);
+                      return <div key={`invalid-${Math.random()}`}>Invalid node</div>;
+                    }
+                    return renderFlowchartNode(child, level + 1);
+                  })}
                 </div>
               )}
             </div>
@@ -483,7 +646,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
     
     // For producer node
     return (
-      <div key={node.id} id={node.id} className={`tree-node tree-node--${node.type} tree-node--level-${level}`}>
+      <div key={nodeId} id={nodeId} className={`tree-node tree-node--${nodeType} tree-node--level-${level} ${hasChildren ? 'has-children' : ''}`}>
         <div 
           className={`tree-node__content ${
             isSelected ? 'tree-node__content--selected' : ''
@@ -497,7 +660,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
               className="tree-node__toggle"
               onClick={(e) => {
                 e.stopPropagation();
-                toggleNodeCollapse(node.id);
+                toggleNodeCollapse(node.id, node);
               }}
               aria-label={isCollapsed ? 'Expand downline' : 'Collapse downline'}
             >
@@ -517,7 +680,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
                 setState(prev => ({ ...prev, selectedProducerId: node.meta!.producerId! }));
                 onSelectProducer?.(node.meta.producerId);
               } else if (hasChildren) {
-                toggleNodeCollapse(node.id);
+                toggleNodeCollapse(node.id, node);
               }
             }}
           >
@@ -532,10 +695,10 @@ const OrgChart: React.FC<OrgChartProps> = ({
                   {visibleChildren.length} downline
                 </span>
               )}
-              {/* Show upline info */}
+              {/* Show upline info with improved visibility */}
               {node.meta?.upline && (
                 <span className="tree-node__upline">
-                  Reports to: {node.meta.upline}
+                  ↑ Reports to: {node.meta.upline}
                 </span>
               )}
             </div>
@@ -574,7 +737,14 @@ const OrgChart: React.FC<OrgChartProps> = ({
         {shouldShowChildren && visibleChildren.length > 0 && (
           <div className="tree-node__children">
             <div className="hierarchy-children">
-              {visibleChildren.map(child => renderFlowchartNode(child, level + 1))}
+              {visibleChildren.map(child => {
+                // Safety check for valid child node
+                if (!child || !child.id || !child.type) {
+                  console.error('Invalid child node in downline:', child);
+                  return <div key={`invalid-${Math.random()}`}>Invalid node</div>;
+                }
+                return renderFlowchartNode(child, level + 1);
+              })}
             </div>
           </div>
         )}

@@ -58,10 +58,12 @@ export async function getJSON<T>(path: string, token: string): Promise<T> {
 export async function fetchFirmRelationsAfter(
   dateISO: string,
   token: string,
-  pageSize = 500
+  pageSize = 1000 // Increased page size for better performance
 ): Promise<GARelation[]> {
   let offset = 0;
   const out: GARelation[] = [];
+  
+  console.log(`Starting to fetch firm relations from ${dateISO}`);
   
   while (true) {
     try {
@@ -71,11 +73,18 @@ export async function fetchFirmRelationsAfter(
       const chunk = await getJSON<GARelation[]>(url, token);
       out.push(...chunk);
       
-      if (chunk.length < pageSize) break;
+      console.log(`Fetched ${chunk.length} relations (total: ${out.length})`);
+      
+      // If we got fewer results than requested, we've reached the end
+      if (chunk.length < pageSize) {
+        console.log(`Finished fetching. Total relations: ${out.length}`);
+        break;
+      }
+      
       offset += pageSize;
       
-      // Rate limiting - stay under 20 req/sec
-      await sleep(60);
+      // Rate limiting - stay under 20 req/sec but be more aggressive
+      await sleep(30); // Reduced from 60ms to 30ms for faster loading
     } catch (error) {
       console.error(`Error fetching firm relations at offset ${offset}:`, error);
       throw error;
