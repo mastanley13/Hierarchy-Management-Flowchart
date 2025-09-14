@@ -3,16 +3,42 @@ import type { GARelation, ChartTree, ProducerLabel } from './types';
 export function relationsToChart(
   firmId: number,
   relations: GARelation[],
-  labelCache: Map<number, ProducerLabel>
+  labelCache: Map<number, ProducerLabel>,
+  firmDetails?: any
 ): ChartTree {
   console.log(`Processing ${relations.length} relations for firm ${firmId}`);
+  console.log('Firm details parameter:', firmDetails);
   
   // Filter relations for our firm
   const firmRelations = relations.filter(r => r.gaId === firmId);
   console.log(`Found ${firmRelations.length} relations for firm ${firmId}`);
   
   // Build hierarchy based on upline relationships
-  return buildHierarchyTree(firmId, firmRelations, labelCache);
+  const hierarchyTree = buildHierarchyTree(firmId, firmRelations, labelCache);
+  
+  // Update the root node with proper firm name if firm details are available
+  if (firmDetails) {
+    console.log('Firm details received:', firmDetails);
+    let firmName = `FIRM ${firmId}`;
+    
+    if (firmDetails.firstName && firmDetails.lastName) {
+      firmName = `${firmDetails.firstName} ${firmDetails.lastName}`;
+    } else if (firmDetails.name) {
+      firmName = firmDetails.name;
+    }
+    
+    hierarchyTree.label = firmName;
+  } else {
+    // Fallback logic: never set agency label to a branch name
+    console.log('No firm details available, using generic fallback');
+    if (firmId === 1756822500362) {
+      hierarchyTree.label = 'SURANCEBAY INSURANCE FIRM';
+    } else if (firmId === 323) {
+      hierarchyTree.label = 'FIRM 323 - AGENCY';
+    }
+  }
+  
+  return hierarchyTree;
 }
 
 function buildHierarchyTree(

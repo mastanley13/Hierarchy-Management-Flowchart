@@ -1,14 +1,44 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Search, RefreshCw, AlertCircle, AlertTriangle, User, Building2, Users, ChevronDown, ChevronRight, Loader2 } from 'lucide-react';
+import { 
+  Search, 
+  RefreshCw, 
+  AlertCircle, 
+  AlertTriangle, 
+  User, 
+  Building2, 
+  Users, 
+  ChevronDown, 
+  ChevronRight, 
+  Loader2, 
+  Download,
+  Eye,
+  EyeOff,
+  BarChart3,
+  Shield,
+  Upload
+} from 'lucide-react';
 import './OrgChart.css';
-import type { ChartTree, GARelation, ProducerLabel, OrgChartProps } from '../lib/types';
-import { fetchFirmRelationsAfter, fetchProducerByNPN, createAuthToken } from '../lib/api';
+import MRFGDashboard from './MRFGDashboard';
+import ProducerDetailPanel from './ProducerDetailPanel';
+import HierarchyUpload from './HierarchyUpload';
+import APITestButton from './APITestButton';
+import type { ChartTree, GARelation, ProducerLabel, OrgChartProps, EnhancedProducerProfile } from '../lib/types';
+import { 
+  fetchFirmRelationsAfter, 
+  fetchProducerByNPN, 
+  createAuthToken, 
+  testMRFGProducerNameResolution, 
+  fetchFirmDetails, 
+  fetchMRFGBulkData,
+  fetchEnhancedProducerProfile
+} from '../lib/api';
 import { relationsToChart, searchTreeByNPN, countNodes } from '../lib/transform';
 import { loadProducerNamesProgressively } from '../lib/progressive-loader';
 // Temporarily disable virtualization to fix import issues
 // We'll implement custom virtualization if needed
 
-interface OrgChartState {
+// Local state type definition (using updated type from types.ts)
+type OrgChartState = {
   tree: ChartTree | null;
   loading: boolean;
   error: string | null;
@@ -24,7 +54,120 @@ interface OrgChartState {
   filterStatus: string;
   showErrorsOnly: boolean;
   expandedFromSearch: Set<string>;
-}
+  firmDetails?: any;
+  enhancedProfiles: Map<number, EnhancedProducerProfile>;
+  csvReports?: {
+    licenses: string;
+    appointments: string;
+    contracts: string;
+    agents: string;
+  };
+  showMRFGFocus: boolean;
+  complianceFilter: 'all' | 'compliant' | 'expiring' | 'expired';
+  showDashboard: boolean;
+  bulkDataLoading: boolean;
+  showUpload: boolean;
+  // Selected MRFG admin account for SureLC auth
+  mrfgAccount: 'equita' | 'quility';
+};
+
+
+// CSV Export Utility Functions
+const escapeCSVField = (field: any): string => {
+  if (field === null || field === undefined) return '';
+  const str = String(field);
+  if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+const generateCSVFromRelations = (relations: GARelation[], labelCache: Map<number, ProducerLabel>): string => {
+  const headers = [
+    'Producer ID',
+    'Producer Name',
+    'NPN',
+    'Branch Code',
+    'Upline ID',
+    'Upline Name',
+    'Status',
+    'Subscribed',
+    'Added On',
+    'Unsubscription Date',
+    'Errors',
+    'Error Date',
+    'Warnings',
+    'Warning Date',
+    'Last Updated'
+  ];
+
+  const rows = relations.map(relation => {
+    const producerLabel = labelCache.get(relation.producerId);
+    const uplineLabel = relation.upline ? labelCache.get(parseInt(relation.upline)) : null;
+    
+    return [
+      relation.producerId,
+      producerLabel?.name || `Producer ${relation.producerId}`,
+      producerLabel?.npn || '',
+      relation.branchCode || '',
+      relation.upline || '',
+      uplineLabel?.name || '',
+      relation.status || '',
+      relation.subscribed || '',
+      relation.addedOn || '',
+      relation.unsubscriptionDate || '',
+      relation.errors || '',
+      relation.errorDate || '',
+      relation.warnings || '',
+      relation.warningDate || '',
+      relation.ts || ''
+    ].map(escapeCSVField);
+  });
+
+  return [headers.map(escapeCSVField), ...rows].map(row => row.join(',')).join('\n');
+};
+
+const downloadCSV = (csvContent: string, filename: string) => {
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
+// Utility function to enhance tree nodes with profile data
+const addEnhancedProfilesToTree = (
+  tree: ChartTree, 
+  profiles: Map<number, EnhancedProducerProfile>
+): ChartTree => {
+  const enhanced: ChartTree = { ...tree };
+  
+  if (tree.type === 'producer' && tree.meta?.producerId) {
+    const profile = profiles.get(tree.meta.producerId);
+    if (profile) {
+      enhanced.meta = {
+        ...tree.meta,
+        enhancedProfile: profile,
+        isMRFG: tree.meta.branchCode === 'Major Revolution Financial Group'
+      };
+      enhanced.badges = {
+        ...tree.badges,
+        licenseCompliance: profile.complianceStatus.licenseCompliance,
+        appointmentStatus: profile.complianceStatus.appointmentStatus
+      };
+    }
+  }
+  
+  if (tree.children) {
+    enhanced.children = tree.children.map(child => addEnhancedProfilesToTree(child, profiles));
+  }
+  
+  return enhanced;
+};
 
 const OrgChart: React.FC<OrgChartProps> = ({
   firmId,
@@ -47,12 +190,40 @@ const OrgChart: React.FC<OrgChartProps> = ({
     },
     filterStatus: 'all',
     showErrorsOnly: false,
-    expandedFromSearch: new Set()
+    expandedFromSearch: new Set(),
+    enhancedProfiles: new Map(),
+    showMRFGFocus: true,
+    complianceFilter: 'all',
+    showDashboard: false,
+    bulkDataLoading: false,
+    showUpload: false,
+    mrfgAccount: 'equita'
   });
 
   const labelCacheRef = useRef(new Map<number, ProducerLabel>());
   const relationsRef = useRef<GARelation[]>([]);
   const isLoadingRef = useRef(false);
+
+  // CSV Export Handler
+  const handleCSVExport = useCallback(() => {
+    if (!relationsRef.current || relationsRef.current.length === 0) {
+      alert('No data available to export. Please refresh the hierarchy first.');
+      return;
+    }
+
+    try {
+      const csvContent = generateCSVFromRelations(relationsRef.current, labelCacheRef.current);
+      const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
+      const filename = `hierarchy-export-firm-${firmId}-${timestamp}.csv`;
+      
+      downloadCSV(csvContent, filename);
+      
+      console.log(`Exported ${relationsRef.current.length} records to ${filename}`);
+    } catch (error) {
+      console.error('Error exporting CSV:', error);
+      alert('Error exporting CSV. Please try again.');
+    }
+  }, [firmId]);
 
   // Removed virtualization constants as we're not using react-window anymore
 
@@ -72,11 +243,12 @@ const OrgChart: React.FC<OrgChartProps> = ({
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      const token = createAuthToken();
-      console.log(`Loading hierarchy data from ${dateToUse}`);
+      const token = createAuthToken(state.mrfgAccount);
+      console.log(`Loading hierarchy data from ${dateToUse} for firm ${firmId}`);
       
+      // Use the general endpoint that was working
       const relations = await fetchFirmRelationsAfter(dateToUse, token, pageLimit);
-      console.log(`Fetched ${relations.length} relations`);
+      console.log(`Fetched ${relations.length} total relations`);
       
       // Log the unique gaId values to see what firms are actually in the data
       const uniqueGaIds = [...new Set(relations.map(r => r.gaId))];
@@ -87,7 +259,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
         setState(prev => ({ 
           ...prev, 
           loading: false, 
-          error: `No hierarchy data found for firm ${firmId}. This firm may not exist or have no relationships.`
+          error: `No hierarchy data found. Please check your credentials and firm ID.`
         }));
         return;
       }
@@ -96,29 +268,94 @@ const OrgChart: React.FC<OrgChartProps> = ({
       let firmRelations = relations.filter(r => r.gaId === firmId);
       let actualFirmId = firmId;
       
-      // If no relations found for the specified firm ID, use the first available firm
-      if (firmRelations.length === 0 && uniqueGaIds.length > 0) {
-        console.log(`No relations found for firm ${firmId}, using first available firm: ${uniqueGaIds[0]}`);
-        actualFirmId = uniqueGaIds[0];
-        firmRelations = relations.filter(r => r.gaId === actualFirmId);
+      // If no relations found for the specified firm ID, show available options
+      if (firmRelations.length === 0) {
+        console.log(`No relations found for firm ${firmId}`);
+        console.log('Available firms:', uniqueGaIds);
+        
+        // For now, let's use the first available firm to show the user what's available
+        if (uniqueGaIds.length > 0) {
+          console.log(`Using first available firm: ${uniqueGaIds[0]} to show available data`);
+          actualFirmId = uniqueGaIds[0];
+          firmRelations = relations.filter(r => r.gaId === actualFirmId);
+          
+          // Show a warning that we're using a different firm
+          setState(prev => ({ 
+            ...prev, 
+            loading: false, 
+            error: `Firm ${firmId} not found. Showing data for firm ${actualFirmId} instead. Available firms: ${uniqueGaIds.join(', ')}`
+          }));
+          return;
+        } else {
+          setState(prev => ({ 
+            ...prev, 
+            loading: false, 
+            error: `No hierarchy data found for firm ${firmId}. No firms available in the data.`
+          }));
+          return;
+        }
       }
       
       console.log(`Filtered ${firmRelations.length} relations for firm ${actualFirmId}`);
-      console.log('Sample relations:', firmRelations.slice(0, 3));
-      relationsRef.current = firmRelations;
+      
+      // MRFG Branch Detection (for UI-only filtering & diagnostics)
+      const mrfgBranch = 'Major Revolution Financial Group';
+      const mrfgProducers = firmRelations.filter(r => (r.branchCode || '').trim() === mrfgBranch);
+      console.log(`MRFG branch detection:`);
+      console.log(`- Total relations for firm ${actualFirmId}: ${firmRelations.length}`);
+      console.log(`- MRFG producers found: ${mrfgProducers.length}`);
+      console.log(`- MRFG producer IDs:`, mrfgProducers.map(r => r.producerId));
+      
+      // Get distinct branch codes for this firm (diagnostic only)
+      const distinctBranches = [...new Set(firmRelations.map(r => r.branchCode).filter(Boolean))];
+      console.log(`- Available branches in firm ${actualFirmId}:`, distinctBranches);
+      
+      // Always use ALL firm relations to build the tree. MRFG focus is applied in shouldShowNode.
+      const relationsToUse = firmRelations;
+      console.log(`Building tree with ALL relations: ${relationsToUse.length}`);
+      console.log('Sample relations:', relationsToUse.slice(0, 3));
+      relationsRef.current = relationsToUse;
+      
+      // Fetch firm details for proper name display
+      console.log(`Fetching firm details for firm ${actualFirmId}...`);
+      const firmDetails = await fetchFirmDetails(actualFirmId, token);
+      
+      if (firmDetails) {
+        console.log(`✅ Firm details successfully retrieved:`, firmDetails);
+      } else {
+        console.log(`⚠️ Firm details not available - will use fallback logic`);
+      }
+      
+      // Test MRFG producer name resolution if we found MRFG producers
+      if (mrfgProducers.length > 0) {
+        const testProducerId = 10385522; // AHI ENTERPRISE from verification results
+        console.log(`Testing name resolution for known MRFG producer ${testProducerId}...`);
+        testMRFGProducerNameResolution(testProducerId, token).catch(error => {
+          console.warn('MRFG producer test failed:', error);
+        });
+      }
+      
+      // Note: CSV analysis functionality moved to MRFG Dashboard
+      console.log('MRFG data analysis now handled by Dashboard component');
 
       const tree = relationsToChart(
         actualFirmId,
-        firmRelations,
-        labelCacheRef.current
+        relationsToUse,
+        labelCacheRef.current,
+        firmDetails
       );
       
       console.log('Generated tree:', tree);
 
-      const maxTs = relations.reduce((max, r) => 
+      const maxTs = relationsToUse.reduce((max, r) => 
         r.ts && r.ts > max ? r.ts : max, 
         dateToUse
       );
+      
+      // Ensure the timestamp has proper timezone format
+      const formattedMaxTs = maxTs.includes('Z') || maxTs.includes('+') || maxTs.includes('-') 
+        ? maxTs 
+        : maxTs + 'Z';
 
       // Initialize with all branches collapsed for better progressive disclosure
       const initialCollapsedNodes = new Set<string>();
@@ -134,10 +371,45 @@ const OrgChart: React.FC<OrgChartProps> = ({
         ...prev,
         tree,
         loading: false,
-        lastRefresh: maxTs,
+        lastRefresh: formattedMaxTs,
         error: null,
-        collapsedNodes: initialCollapsedNodes
+        collapsedNodes: initialCollapsedNodes,
+        firmDetails: firmDetails
       }));
+
+      // Enhanced MRFG Data Loading
+      if (mrfgProducers.length > 0) {
+        console.log(`🚀 Starting enhanced MRFG data loading for ${mrfgProducers.length} producers...`);
+        
+        setState(prev => ({ ...prev, bulkDataLoading: true }));
+        
+        try {
+          const mrfgProducerIds = mrfgProducers.map(r => r.producerId);
+          const bulkData = await fetchMRFGBulkData(mrfgProducerIds, token);
+          
+          console.log(`✅ MRFG bulk data loaded:`, {
+            profiles: bulkData.profiles.size,
+            csvReports: Object.keys(bulkData.csvReports).length
+          });
+
+          setState(prev => ({
+            ...prev,
+            enhancedProfiles: bulkData.profiles,
+            csvReports: bulkData.csvReports,
+            bulkDataLoading: false
+          }));
+
+          // Update tree with enhanced profile data
+          if (tree) {
+            const enhancedTree = addEnhancedProfilesToTree(tree, bulkData.profiles);
+            setState(prev => ({ ...prev, tree: enhancedTree }));
+          }
+
+        } catch (error) {
+          console.error('Failed to load MRFG bulk data:', error);
+          setState(prev => ({ ...prev, bulkDataLoading: false }));
+        }
+      }
       
       // Only load names for the root agency node initially
       if (tree && tree.type === 'agency') {
@@ -179,7 +451,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
                 }
               }));
             },
-            4, // modest concurrency
+            6, // modestly increased concurrency
             tree.id // Only load for the root node
           ).then(() => {
             setState(prev => ({ 
@@ -213,7 +485,25 @@ const OrgChart: React.FC<OrgChartProps> = ({
     } finally {
       isLoadingRef.current = false;
     }
-  }, [firmId, pageLimit]); // Removed initialDate to prevent infinite re-renders
+  }, [firmId, pageLimit, state.mrfgAccount]); // include account so token updates
+
+  // Upload handlers
+  const handleUploadStart = useCallback(() => {
+    console.log('📤 Upload started');
+    setState(prev => ({ ...prev, loading: true }));
+  }, []);
+
+  const handleUploadComplete = useCallback((status: any) => {
+    console.log('✅ Upload completed:', status);
+    setState(prev => ({ ...prev, loading: false }));
+    
+    if (status.status === 'completed') {
+      // Refresh the hierarchy data after successful upload
+      setTimeout(() => {
+        loadHierarchyData(state.lastRefresh);
+      }, 1000);
+    }
+  }, [state.lastRefresh, loadHierarchyData]);
 
   // We're now counting producers on-demand when branches are expanded
   // so we don't need this function anymore
@@ -251,7 +541,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
           
           try {
             // Start loading names for this branch
-            const token = createAuthToken();
+            const token = createAuthToken(state.mrfgAccount);
             
             // Count producers needing names in this subtree
             let subtreeProducersCount = 0;
@@ -297,7 +587,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
                     }
                   }));
                 },
-                4, // concurrency
+                6, // modestly increased concurrency
                 nodeId // Only load names for this subtree
               ).then(() => {
                 setState(prev => ({ 
@@ -337,7 +627,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
         return { ...prev, collapsedNodes: newCollapsed };
       });
     }
-  }, [state.tree, state.collapsedNodes]);
+  }, [state.tree, state.collapsedNodes, state.mrfgAccount]);
 
   const handleRefresh = useCallback(async () => {
     await loadHierarchyData(state.lastRefresh);
@@ -349,7 +639,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
     setState(prev => ({ ...prev, loading: true, error: null }));
 
     try {
-      const token = createAuthToken();
+      const token = createAuthToken(state.mrfgAccount);
       const producer = await fetchProducerByNPN(state.searchQuery.trim(), token);
       
       if (!producer) {
@@ -412,9 +702,126 @@ const OrgChart: React.FC<OrgChartProps> = ({
         error: 'Search failed'
       }));
     }
-  }, [state.searchQuery, state.tree]);
+  }, [state.searchQuery, state.tree, state.mrfgAccount]);
 
-  // Removed unused functions: clearSearch, toggleFilter
+  // New handlers for enhanced functionality
+  const handleToggleDashboard = useCallback(async () => {
+    const newShowDashboard = !state.showDashboard;
+    setState(prev => ({ ...prev, showDashboard: newShowDashboard }));
+    
+    // If opening dashboard and we have no enhanced profiles, try to load MRFG data
+    if (newShowDashboard && state.enhancedProfiles.size === 0 && state.tree && !state.bulkDataLoading) {
+      console.log('📊 Dashboard opened with no enhanced profiles. Loading MRFG bulk data...');
+      
+      // Find MRFG producers in the current tree
+      const findMRFGProducers = (node: ChartTree): ChartTree[] => {
+        const mrfgNodes: ChartTree[] = [];
+        
+        if (node.type === 'producer' && node.meta?.branchCode === 'Major Revolution Financial Group') {
+          mrfgNodes.push(node);
+        }
+        
+        if (node.children) {
+          for (const child of node.children) {
+            mrfgNodes.push(...findMRFGProducers(child));
+          }
+        }
+        
+        return mrfgNodes;
+      };
+      
+      const mrfgProducers = findMRFGProducers(state.tree);
+      
+      if (mrfgProducers.length > 0) {
+        setState(prev => ({ ...prev, bulkDataLoading: true }));
+        
+        try {
+          const token = createAuthToken(state.mrfgAccount);
+          const mrfgProducerIds = mrfgProducers
+            .map(p => p.meta?.producerId)
+            .filter((id): id is number => typeof id === 'number');
+          const bulkData = await fetchMRFGBulkData(mrfgProducerIds, token);
+          
+          console.log(`✅ Dashboard-triggered MRFG bulk data loaded:`, {
+            profiles: bulkData.profiles.size,
+            csvReports: Object.keys(bulkData.csvReports).length
+          });
+
+          setState(prev => ({
+            ...prev,
+            enhancedProfiles: bulkData.profiles,
+            csvReports: bulkData.csvReports,
+            bulkDataLoading: false
+          }));
+
+          // Update tree with enhanced profile data
+          const enhancedTree = addEnhancedProfilesToTree(state.tree!, bulkData.profiles);
+          setState(prev => ({ ...prev, tree: enhancedTree }));
+
+        } catch (error) {
+          console.error('Failed to load MRFG bulk data for dashboard:', error);
+          setState(prev => ({ ...prev, bulkDataLoading: false }));
+        }
+      } else {
+        console.log('No MRFG producers found in current tree');
+      }
+    }
+  }, [state.showDashboard, state.enhancedProfiles.size, state.tree, state.bulkDataLoading, state.mrfgAccount]);
+
+  const handleToggleMRFGFocus = useCallback(() => {
+    setState(prev => ({ ...prev, showMRFGFocus: !prev.showMRFGFocus }));
+  }, []);
+
+  const handleComplianceFilterChange = useCallback((filter: 'all' | 'compliant' | 'expiring' | 'expired') => {
+    setState(prev => ({ ...prev, complianceFilter: filter }));
+  }, []);
+
+  const handleProducerDetailSelect = useCallback(async (producerId: number) => {
+    // Check if we already have enhanced profile
+    if (state.enhancedProfiles.has(producerId)) {
+      setState(prev => ({ ...prev, selectedProducerId: producerId }));
+      onSelectProducer?.(producerId);
+      return;
+    }
+
+    // Fetch enhanced profile on-demand
+    setState(prev => ({ ...prev, loading: true }));
+    try {
+      const token = createAuthToken(state.mrfgAccount);
+      const profile = await fetchEnhancedProducerProfile(producerId, token);
+      
+      setState(prev => ({
+        ...prev,
+        enhancedProfiles: new Map(prev.enhancedProfiles).set(producerId, profile),
+        selectedProducerId: producerId,
+        loading: false
+      }));
+      
+      onSelectProducer?.(producerId);
+    } catch (error) {
+      console.error('Failed to fetch enhanced profile:', error);
+      setState(prev => ({ ...prev, loading: false }));
+    }
+  }, [state.enhancedProfiles, onSelectProducer, state.mrfgAccount]);
+
+  const handleRefreshProducer = useCallback(async (producerId: number) => {
+    setState(prev => ({ ...prev, bulkDataLoading: true }));
+    try {
+      const token = createAuthToken(state.mrfgAccount);
+      const profile = await fetchEnhancedProducerProfile(producerId, token);
+      
+      setState(prev => ({
+        ...prev,
+        enhancedProfiles: new Map(prev.enhancedProfiles).set(producerId, profile),
+        bulkDataLoading: false
+      }));
+      
+      console.log(`✅ Refreshed profile for producer ${producerId}`);
+    } catch (error) {
+      console.error('Failed to refresh producer profile:', error);
+      setState(prev => ({ ...prev, bulkDataLoading: false }));
+    }
+  }, [state.mrfgAccount]);
 
   // Filter function for nodes
   const shouldShowNode = useCallback((node: ChartTree): boolean => {
@@ -423,16 +830,35 @@ const OrgChart: React.FC<OrgChartProps> = ({
       return false;
     }
     
-    // Always show agency and branch nodes
-    if (node.type === 'agency' || node.type === 'branch') return true;
+    // Always show agency nodes
+    if (node.type === 'agency') return true;
+    
+    // MRFG Focus filter - only show MRFG branch if enabled
+    if (node.type === 'branch' && state.showMRFGFocus) {
+      return node.meta?.branchCode === 'Major Revolution Financial Group';
+    }
+    
+    // Show all branches if MRFG focus is disabled
+    if (node.type === 'branch') return true;
     
     // Apply filters to producer nodes
     if (node.type === 'producer') {
+      // MRFG Focus filter
+      if (state.showMRFGFocus && node.meta?.branchCode !== 'Major Revolution Financial Group') {
+        return false;
+      }
+      
       // Status filter
       if (state.filterStatus !== 'all') {
         const nodeStatus = node.badges?.status?.toLowerCase();
         if (state.filterStatus === 'active' && nodeStatus !== 'active') return false;
         if (state.filterStatus === 'archived' && nodeStatus !== 'archived') return false;
+      }
+      
+      // Compliance filter
+      if (state.complianceFilter !== 'all') {
+        const complianceStatus = node.badges?.licenseCompliance;
+        if (state.complianceFilter !== complianceStatus) return false;
       }
       
       // Errors filter
@@ -442,7 +868,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
     }
     
     return true;
-  }, [state.filterStatus, state.showErrorsOnly]);
+  }, [state.filterStatus, state.showErrorsOnly, state.showMRFGFocus, state.complianceFilter]);
 
   // Removed unused function: countFilteredNodes
 
@@ -451,7 +877,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
     loadHierarchyData();
   }, []); // Empty dependency array - only run once on mount
 
-  const renderFlowchartNode = (node: ChartTree, level: number = 0): React.ReactElement => {
+  const renderFlowchartNode = useCallback((node: ChartTree, level: number = 0): React.ReactElement => {
     // Safety check for malformed nodes
     if (!node || !node.type || !node.id) {
       console.error('Invalid node encountered:', node);
@@ -481,8 +907,8 @@ const OrgChart: React.FC<OrgChartProps> = ({
         return false;
       }
       
-      // Then check if it should be shown
-      return shouldShowNode(child) || child.type !== 'producer';
+      // Then check if it should be shown (respect focus/filter for all node types)
+      return shouldShowNode(child);
     }) || [];
     
     // For agency (root) node
@@ -677,8 +1103,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
             className="tree-node__main"
             onClick={() => {
               if (node.meta?.producerId) {
-                setState(prev => ({ ...prev, selectedProducerId: node.meta!.producerId! }));
-                onSelectProducer?.(node.meta.producerId);
+                handleProducerDetailSelect(node.meta.producerId);
               } else if (hasChildren) {
                 toggleNodeCollapse(node.id, node);
               }
@@ -718,6 +1143,19 @@ const OrgChart: React.FC<OrgChartProps> = ({
                     {node.badges.status}
                   </span>
                 )}
+                {node.meta?.isMRFG && (
+                  <span className="mrfg-badge" title="Major Revolution Financial Group Producer">
+                    MRFG
+                  </span>
+                )}
+                {node.badges.licenseCompliance && node.badges.licenseCompliance !== 'unknown' && (
+                  <div 
+                    className={`compliance-indicator compliance-indicator--${node.badges.licenseCompliance}`} 
+                    title={`License: ${node.badges.licenseCompliance}`}
+                  >
+                    <Shield size={12} />
+                  </div>
+                )}
                 {node.badges.hasErrors && (
                   <div className="status-indicator status-indicator--error" title={node.meta?.errors || 'Has errors'}>
                     <AlertCircle size={14} />
@@ -750,9 +1188,35 @@ const OrgChart: React.FC<OrgChartProps> = ({
         )}
       </div>
     );
-  };
+  }, [
+    shouldShowNode,
+    state.selectedProducerId,
+    state.collapsedNodes,
+    state.showMRFGFocus,
+    state.filterStatus,
+    state.showErrorsOnly,
+    state.complianceFilter,
+    toggleNodeCollapse,
+    handleProducerDetailSelect
+  ]);
 
-  const stats = state.tree ? countNodes(state.tree) : { agencies: 0, branches: 0, producers: 0 };
+  // Compute stats; if MRFG focus is ON, count only the MRFG subtree
+  const stats = (() => {
+    if (!state.tree) return { agencies: 0, branches: 0, producers: 0 };
+    if (!state.showMRFGFocus) return countNodes(state.tree);
+    const findMRFGBranch = (node: ChartTree): ChartTree | null => {
+      if (node.type === 'branch' && node.meta?.branchCode === 'Major Revolution Financial Group') return node;
+      if (node.children) {
+        for (const child of node.children) {
+          const found = findMRFGBranch(child);
+          if (found) return found;
+        }
+      }
+      return null;
+    };
+    const mrfg = findMRFGBranch(state.tree);
+    return mrfg ? countNodes(mrfg) : countNodes(state.tree);
+  })();
 
   return (
     <div className="org-chart-container">
@@ -785,6 +1249,149 @@ const OrgChart: React.FC<OrgChartProps> = ({
 
           <div className="toolbar__section">
             <button 
+              onClick={handleToggleDashboard}
+              className={`toolbar__button ${state.showDashboard ? 'toolbar__button--active' : ''}`}
+              title="Toggle MRFG Dashboard"
+            >
+              <BarChart3 size={16} />
+              {state.showDashboard ? 'Hide Dashboard' : 'Show Dashboard'}
+            </button>
+            
+            <button 
+              onClick={async () => {
+                if (state.tree && !state.bulkDataLoading) {
+                  console.log('📊 Manual MRFG data load triggered');
+                  
+                  const findMRFGProducers = (node: ChartTree): ChartTree[] => {
+                    const mrfgNodes: ChartTree[] = [];
+                    
+                    if (node.type === 'producer' && node.meta?.branchCode === 'Major Revolution Financial Group') {
+                      mrfgNodes.push(node);
+                    }
+                    
+                    if (node.children) {
+                      for (const child of node.children) {
+                        mrfgNodes.push(...findMRFGProducers(child));
+                      }
+                    }
+                    
+                    return mrfgNodes;
+                  };
+                  
+                  const mrfgProducers = findMRFGProducers(state.tree);
+                  console.log(`Found ${mrfgProducers.length} MRFG producers to load`);
+                  
+                  if (mrfgProducers.length > 0) {
+                    setState(prev => ({ ...prev, bulkDataLoading: true }));
+                    
+                    try {
+                      const token = createAuthToken(state.mrfgAccount);
+                      const mrfgProducerIds = mrfgProducers
+                        .map(p => p.meta?.producerId)
+                        .filter((id): id is number => typeof id === 'number');
+                      const bulkData = await fetchMRFGBulkData(mrfgProducerIds, token);
+                      
+                      console.log(`✅ Manual MRFG bulk data loaded:`, {
+                        profiles: bulkData.profiles.size,
+                        csvReports: Object.keys(bulkData.csvReports).length
+                      });
+
+                      setState(prev => ({
+                        ...prev,
+                        enhancedProfiles: bulkData.profiles,
+                        csvReports: bulkData.csvReports,
+                        bulkDataLoading: false
+                      }));
+
+                      const enhancedTree = addEnhancedProfilesToTree(state.tree!, bulkData.profiles);
+                      setState(prev => ({ ...prev, tree: enhancedTree }));
+
+                    } catch (error) {
+                      console.error('Failed to load MRFG bulk data manually:', error);
+                      setState(prev => ({ ...prev, bulkDataLoading: false }));
+                    }
+                  }
+                }
+              }}
+              disabled={state.bulkDataLoading || !state.tree}
+              className="toolbar__button"
+              title="Manually load MRFG data"
+            >
+              <Users size={16} />
+              Load MRFG Data
+            </button>
+            
+            <button 
+              onClick={handleToggleMRFGFocus}
+              className={`toolbar__button ${state.showMRFGFocus ? 'toolbar__button--active' : ''}`}
+              title="Focus on MRFG producers only"
+            >
+              {state.showMRFGFocus ? <Eye size={16} /> : <EyeOff size={16} />}
+              MRFG Focus
+            </button>
+
+            {/* MRFG Admin Account Switcher */}
+            <button
+              onClick={() => {
+                if (state.mrfgAccount !== 'equita') {
+                  setState(prev => ({ ...prev, mrfgAccount: 'equita' }));
+                  // Reload data with Equita credentials
+                  loadHierarchyData(state.lastRefresh);
+                }
+              }}
+              className={`toolbar__button ${state.mrfgAccount === 'equita' ? 'toolbar__button--active' : ''}`}
+              title="Use Equita (Primary) SureLC credentials"
+            >
+              Equita (Primary)
+            </button>
+            <button
+              onClick={() => {
+                if (state.mrfgAccount !== 'quility') {
+                  setState(prev => ({ ...prev, mrfgAccount: 'quility' }));
+                  // Reload data with Quility credentials
+                  loadHierarchyData(state.lastRefresh);
+                }
+              }}
+              className={`toolbar__button ${state.mrfgAccount === 'quility' ? 'toolbar__button--active' : ''}`}
+              title="Use Quility (Secondary) SureLC credentials"
+            >
+              Quility (Secondary)
+            </button>
+            
+            <select 
+              value={state.complianceFilter}
+              onChange={(e) => handleComplianceFilterChange(e.target.value as any)}
+              className="toolbar__select"
+              title="Filter by compliance status"
+            >
+              <option value="all">All Compliance</option>
+              <option value="compliant">Compliant</option>
+              <option value="expiring">Expiring Soon</option>
+              <option value="expired">Expired</option>
+            </select>
+          </div>
+
+          <div className="toolbar__section">
+            <button 
+              onClick={() => setState(prev => ({ ...prev, showUpload: !prev.showUpload }))}
+              className={`toolbar__button ${state.showUpload ? 'toolbar__button--active' : ''}`}
+              title="Upload hierarchy data"
+            >
+              <Upload size={16} />
+              {state.showUpload ? 'Hide Upload' : 'Upload Data'}
+            </button>
+            
+            <button 
+              onClick={handleCSVExport}
+              disabled={state.loading || !relationsRef.current || relationsRef.current.length === 0}
+              className="toolbar__button toolbar__button--export"
+              title="Export hierarchy data to CSV"
+            >
+              <Download size={16} />
+              Export CSV
+            </button>
+            
+            <button 
               onClick={handleRefresh}
               disabled={state.loading}
               className="toolbar__button toolbar__button--refresh"
@@ -793,6 +1400,8 @@ const OrgChart: React.FC<OrgChartProps> = ({
               <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
               Refresh
             </button>
+            
+            <APITestButton />
           </div>
         </div>
 
@@ -805,6 +1414,12 @@ const OrgChart: React.FC<OrgChartProps> = ({
             <div className="stat-item">
               <span className="stat-item__value">{stats.producers}</span>
               <span className="stat-item__label">Producers</span>
+            </div>
+            <div className="stat-item">
+              <span className="stat-item__value" style={{color: state.enhancedProfiles.size > 0 ? '#22c55e' : '#6b7280'}}>
+                {state.enhancedProfiles.size}
+              </span>
+              <span className="stat-item__label">Enhanced Profiles</span>
             </div>
           </div>
           
@@ -829,9 +1444,26 @@ const OrgChart: React.FC<OrgChartProps> = ({
             </span>
           </div>
         </div>
+        
       </header>
 
       <main className="org-chart-content">
+        {/* MRFG Dashboard */}
+        {state.showDashboard && (
+          <MRFGDashboard 
+            enhancedProfiles={state.enhancedProfiles}
+            onProducerSelect={handleProducerDetailSelect}
+          />
+        )}
+
+        {/* Hierarchy Upload */}
+        {state.showUpload && (
+          <HierarchyUpload 
+            onUploadStart={handleUploadStart}
+            onUploadComplete={handleUploadComplete}
+          />
+        )}
+
         {state.error && (
           <div className="error-message">
             <AlertCircle size={16} />
@@ -846,13 +1478,40 @@ const OrgChart: React.FC<OrgChartProps> = ({
           </div>
         )}
 
-        {state.tree && !state.loading && (
-          <div className="hierarchy-tree">
-            <div className="hierarchy-tree__container">
-              {renderFlowchartNode(state.tree)}
+        {state.tree && !state.loading && (() => {
+          // When MRFG Focus is ON, render the MRFG branch as the root
+          if (state.showMRFGFocus) {
+            const findMRFGBranch = (node: ChartTree): ChartTree | null => {
+              if (!node) return null;
+              if (node.type === 'branch' && node.meta?.branchCode === 'Major Revolution Financial Group') {
+                return node;
+              }
+              if (node.children) {
+                for (const child of node.children) {
+                  const found = findMRFGBranch(child);
+                  if (found) return found;
+                }
+              }
+              return null;
+            };
+            const mrfgRoot = findMRFGBranch(state.tree);
+            return (
+              <div className="hierarchy-tree">
+                <div className="hierarchy-tree__container">
+                  {renderFlowchartNode(mrfgRoot || state.tree)}
+                </div>
+              </div>
+            );
+          }
+          // Default: render full firm tree
+          return (
+            <div className="hierarchy-tree">
+              <div className="hierarchy-tree__container">
+                {renderFlowchartNode(state.tree)}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
         
         {!state.tree && !state.loading && !state.error && (
           <div className="empty-state">
@@ -863,6 +1522,14 @@ const OrgChart: React.FC<OrgChartProps> = ({
             </p>
           </div>
         )}
+
+        {/* Producer Detail Panel */}
+        <ProducerDetailPanel
+          profile={state.selectedProducerId ? state.enhancedProfiles.get(state.selectedProducerId) || null : null}
+          isOpen={!!state.selectedProducerId}
+          onClose={() => setState(prev => ({ ...prev, selectedProducerId: null }))}
+          onRefresh={handleRefreshProducer}
+        />
       </main>
     </div>
   );
