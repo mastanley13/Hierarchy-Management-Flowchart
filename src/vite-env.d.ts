@@ -1,7 +1,9 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_FIRM_ID: string
+  readonly VITE_FIRM_ID_EQUITA: string
+  readonly VITE_FIRM_ID_QUILITY: string
+  readonly VITE_FIRM_ID?: string
   // Legacy single-account vars (back-compat)
   readonly VITE_SURELC_USER: string
   readonly VITE_SURELC_PASS: string

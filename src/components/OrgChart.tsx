@@ -55,6 +55,8 @@ type OrgChartState = {
   showErrorsOnly: boolean;
   expandedFromSearch: Set<string>;
   firmDetails?: any;
+  activeFirmId: number;
+  firmIdNotice: string | null;
   enhancedProfiles: Map<number, EnhancedProducerProfile>;
   csvReports?: {
     licenses: string;
@@ -173,7 +175,8 @@ const OrgChart: React.FC<OrgChartProps> = ({
   firmId,
   initialDate = '2000-01-01T00:00:00Z',
   pageLimit = 10000, // Increased limit to fetch more producers
-  onSelectProducer
+  fetchAuth,
+  onOpenDebugPanel
 }) => {
   const [state, setState] = useState<OrgChartState>({
     tree: null,
@@ -197,7 +200,28 @@ const OrgChart: React.FC<OrgChartProps> = ({
     showDashboard: false,
     bulkDataLoading: false,
     showUpload: false,
-    mrfgAccount: 'equita'
+    mrfgAccount: 'equita',
+    activeFirmId: firmId,
+    firmIdNotice: null
+  });
+
+  const parseFirmId = (value?: string) => {
+    if (!value) return null;
+    const parsed = Number.parseInt(value, 10);
+    return Number.isNaN(parsed) ? null : parsed;
+  };
+
+  const equitaDefaultFirmId = parseFirmId(import.meta.env.VITE_FIRM_ID_EQUITA)
+    ?? parseFirmId(import.meta.env.VITE_FIRM_ID)
+    ?? firmId;
+
+  const quilityDefaultFirmId = parseFirmId(import.meta.env.VITE_FIRM_ID_QUILITY)
+    ?? equitaDefaultFirmId
+    ?? firmId;
+
+  const accountFirmIdRef = useRef<{ equita: number; quility: number }>({
+    equita: equitaDefaultFirmId ?? firmId,
+    quility: quilityDefaultFirmId,
   });
 
   const labelCacheRef = useRef(new Map<number, ProducerLabel>());
@@ -214,7 +238,8 @@ const OrgChart: React.FC<OrgChartProps> = ({
     try {
       const csvContent = generateCSVFromRelations(relationsRef.current, labelCacheRef.current);
       const timestamp = new Date().toISOString().slice(0, 19).replace(/:/g, '-');
-      const filename = `hierarchy-export-firm-${firmId}-${timestamp}.csv`;
+      const activeFirmId = state.activeFirmId || firmId;
+      const filename = `hierarchy-export-firm-${activeFirmId}-${timestamp}.csv`;
       
       downloadCSV(csvContent, filename);
       
@@ -223,15 +248,16 @@ const OrgChart: React.FC<OrgChartProps> = ({
       console.error('Error exporting CSV:', error);
       alert('Error exporting CSV. Please try again.');
     }
-  }, [firmId]);
+  }, [firmId, state.activeFirmId]);
 
   // Removed virtualization constants as we're not using react-window anymore
 
   // We no longer need this since we're using on-demand loading
   // const lastNameUpdateRef = useRef(0);
 
-  const loadHierarchyData = useCallback(async (fromDate?: string) => {
+  const loadHierarchyData = useCallback(async (fromDate?: string, accountOverride?: 'equita' | 'quility') => {
     const dateToUse = fromDate || initialDate;
+    const accountToUse = accountOverride ?? state.mrfgAccount;
     
     // Prevent duplicate API calls
     if (isLoadingRef.current) {
@@ -240,11 +266,12 @@ const OrgChart: React.FC<OrgChartProps> = ({
     }
     
     isLoadingRef.current = true;
-    setState(prev => ({ ...prev, loading: true, error: null }));
+    setState(prev => ({ ...prev, loading: true, error: null, firmIdNotice: null }));
 
     try {
-      const token = createAuthToken(state.mrfgAccount);
-      console.log(`Loading hierarchy data from ${dateToUse} for firm ${firmId}`);
+      const token = createAuthToken(accountToUse);
+      const preferredFirmId = accountFirmIdRef.current[accountToUse] ?? (accountToUse === 'quility' ? quilityDefaultFirmId : firmId);
+      console.log(`Loading hierarchy data from ${dateToUse} for firm ${preferredFirmId} using ${accountToUse} credentials`);
       
       // Use the general endpoint that was working
       const relations = await fetchFirmRelationsAfter(dateToUse, token, pageLimit);
@@ -253,49 +280,63 @@ const OrgChart: React.FC<OrgChartProps> = ({
       // Log the unique gaId values to see what firms are actually in the data
       const uniqueGaIds = [...new Set(relations.map(r => r.gaId))];
       console.log('Available firm IDs (gaIds) in the data:', uniqueGaIds);
-      console.log('Looking for firm ID:', firmId);
+      console.log('Looking for firm ID:', preferredFirmId);
       
       if (relations.length === 0) {
         setState(prev => ({ 
           ...prev, 
           loading: false, 
-          error: `No hierarchy data found. Please check your credentials and firm ID.`
+          error: `No hierarchy data found. Please check your credentials and firm ID.`,
+          firmIdNotice: null
         }));
         return;
       }
 
       // Filter relations for our specific firm
-      let firmRelations = relations.filter(r => r.gaId === firmId);
-      let actualFirmId = firmId;
+      let firmRelations = relations.filter(r => r.gaId === preferredFirmId);
+      let actualFirmId = preferredFirmId;
+      let firmIdMessage: string | null = null;
       
       // If no relations found for the specified firm ID, show available options
       if (firmRelations.length === 0) {
-        console.log(`No relations found for firm ${firmId}`);
+        console.log(`No relations found for firm ${preferredFirmId}`);
         console.log('Available firms:', uniqueGaIds);
         
         // For now, let's use the first available firm to show the user what's available
         if (uniqueGaIds.length > 0) {
-          console.log(`Using first available firm: ${uniqueGaIds[0]} to show available data`);
-          actualFirmId = uniqueGaIds[0];
-          firmRelations = relations.filter(r => r.gaId === actualFirmId);
-          
-          // Show a warning that we're using a different firm
-          setState(prev => ({ 
-            ...prev, 
-            loading: false, 
-            error: `Firm ${firmId} not found. Showing data for firm ${actualFirmId} instead. Available firms: ${uniqueGaIds.join(', ')}`
-          }));
-          return;
+          const fallbackFirmId = uniqueGaIds.find(id => typeof id === 'number' && !Number.isNaN(id));
+
+          if (fallbackFirmId === undefined) {
+            console.warn('No numeric firm IDs available in the dataset.');
+          } else {
+            console.log(`Using first available firm: ${fallbackFirmId} to show available data`);
+            actualFirmId = fallbackFirmId;
+            firmRelations = relations.filter(r => r.gaId === actualFirmId);
+
+            // Show a warning that we're using a different firm
+            firmIdMessage = `Firm ${preferredFirmId} not found. Showing data for firm ${actualFirmId} instead. Available firms: ${uniqueGaIds.join(', ')}`;
+          }
         } else {
           setState(prev => ({ 
             ...prev, 
             loading: false, 
-            error: `No hierarchy data found for firm ${firmId}. No firms available in the data.`
+            error: `No hierarchy data found for firm ${preferredFirmId}. No firms available in the data.`,
+            firmIdNotice: null
           }));
           return;
         }
       }
       
+      if (firmRelations.length === 0) {
+        setState(prev => ({ 
+          ...prev, 
+          loading: false, 
+          error: `No hierarchy data found for available firms. Detected firms: ${uniqueGaIds.join(', ') || 'none'}.`,
+          firmIdNotice: null
+        }));
+        return;
+      }
+
       console.log(`Filtered ${firmRelations.length} relations for firm ${actualFirmId}`);
       
       // MRFG Branch Detection (for UI-only filtering & diagnostics)
@@ -374,8 +415,12 @@ const OrgChart: React.FC<OrgChartProps> = ({
         lastRefresh: formattedMaxTs,
         error: null,
         collapsedNodes: initialCollapsedNodes,
-        firmDetails: firmDetails
+        firmDetails: firmDetails,
+        activeFirmId: actualFirmId,
+        firmIdNotice: firmIdMessage
       }));
+
+      accountFirmIdRef.current[accountToUse] = actualFirmId;
 
       // Enhanced MRFG Data Loading
       if (mrfgProducers.length > 0) {
@@ -480,7 +525,8 @@ const OrgChart: React.FC<OrgChartProps> = ({
       setState(prev => ({
         ...prev,
         loading: false,
-        error: error instanceof Error ? error.message : 'Failed to load hierarchy data'
+        error: error instanceof Error ? error.message : 'Failed to load hierarchy data',
+        firmIdNotice: null
       }));
     } finally {
       isLoadingRef.current = false;
@@ -500,10 +546,10 @@ const OrgChart: React.FC<OrgChartProps> = ({
     if (status.status === 'completed') {
       // Refresh the hierarchy data after successful upload
       setTimeout(() => {
-        loadHierarchyData(state.lastRefresh);
+        loadHierarchyData(state.lastRefresh, state.mrfgAccount);
       }, 1000);
     }
-  }, [state.lastRefresh, loadHierarchyData]);
+  }, [state.lastRefresh, loadHierarchyData, state.mrfgAccount]);
 
   // We're now counting producers on-demand when branches are expanded
   // so we don't need this function anymore
@@ -630,13 +676,13 @@ const OrgChart: React.FC<OrgChartProps> = ({
   }, [state.tree, state.collapsedNodes, state.mrfgAccount]);
 
   const handleRefresh = useCallback(async () => {
-    await loadHierarchyData(state.lastRefresh);
-  }, [state.lastRefresh]); // Removed loadHierarchyData dependency
+    await loadHierarchyData(state.lastRefresh, state.mrfgAccount);
+  }, [loadHierarchyData, state.lastRefresh, state.mrfgAccount]);
 
   const handleSearch = useCallback(async () => {
     if (!state.searchQuery.trim()) return;
 
-    setState(prev => ({ ...prev, loading: true, error: null }));
+    setState(prev => ({ ...prev, loading: true, error: null, firmIdNotice: null }));
 
     try {
       const token = createAuthToken(state.mrfgAccount);
@@ -646,7 +692,8 @@ const OrgChart: React.FC<OrgChartProps> = ({
         setState(prev => ({ 
           ...prev, 
           loading: false, 
-          error: `No producer found with NPN: ${state.searchQuery}` 
+          error: `No producer found with NPN: ${state.searchQuery}`,
+          firmIdNotice: null 
         }));
         return;
       }
@@ -780,7 +827,6 @@ const OrgChart: React.FC<OrgChartProps> = ({
     // Check if we already have enhanced profile
     if (state.enhancedProfiles.has(producerId)) {
       setState(prev => ({ ...prev, selectedProducerId: producerId }));
-      onSelectProducer?.(producerId);
       return;
     }
 
@@ -796,13 +842,11 @@ const OrgChart: React.FC<OrgChartProps> = ({
         selectedProducerId: producerId,
         loading: false
       }));
-      
-      onSelectProducer?.(producerId);
     } catch (error) {
       console.error('Failed to fetch enhanced profile:', error);
       setState(prev => ({ ...prev, loading: false }));
     }
-  }, [state.enhancedProfiles, onSelectProducer, state.mrfgAccount]);
+  }, [state.enhancedProfiles, state.mrfgAccount]);
 
   const handleRefreshProducer = useCallback(async (producerId: number) => {
     setState(prev => ({ ...prev, bulkDataLoading: true }));
@@ -872,10 +916,11 @@ const OrgChart: React.FC<OrgChartProps> = ({
 
   // Removed unused function: countFilteredNodes
 
-  // Load data once on mount
+  // Load data for the active admin account
   useEffect(() => {
-    loadHierarchyData();
-  }, []); // Empty dependency array - only run once on mount
+    // Ensure the hierarchy reloads when the active admin account changes
+    loadHierarchyData(undefined, state.mrfgAccount);
+  }, [loadHierarchyData, state.mrfgAccount]);
 
   const renderFlowchartNode = useCallback((node: ChartTree, level: number = 0): React.ReactElement => {
     // Safety check for malformed nodes
@@ -1218,45 +1263,128 @@ const OrgChart: React.FC<OrgChartProps> = ({
     return mrfg ? countNodes(mrfg) : countNodes(state.tree);
   })();
 
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      (window as any).__orgChartDebug = {
+        state,
+        stats,
+        config: {
+          firmId,
+          initialDate,
+          pageLimit
+        },
+        firmIds: accountFirmIdRef.current,
+        relations: relationsRef.current
+      };
+    }
+  }, [state, stats, firmId, initialDate, pageLimit]);
+
   return (
     <div className="org-chart-container">
       <header className="org-chart-header">
-        <h1>Hierarchy Management System</h1>
-        
-        <div className="toolbar">
-          <div className="toolbar__section">
-            <div className="search-bar">
-              <div className="search-bar__input-wrapper">
-                <Search size={16} className="search-bar__icon" />
-                <input
-                  type="text"
-                  placeholder="Search by NPN..."
-                  value={state.searchQuery}
-                  onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                  className="search-bar__input"
-                />
-              </div>
+        {/* Compact Top Bar */}
+        <div className="compact-header">
+          <div className="compact-header__left">
+            <h1 className="compact-header__title">Hierarchy Management System</h1>
+            <span className="compact-header__firm">Major Revolution Financial Group</span>
+          </div>
+          
+          <div className="compact-header__center">
+            <div className="search-container">
+              <Search size={16} className="search-icon" />
+              <input
+                type="text"
+                placeholder="Search by NPN..."
+                value={state.searchQuery}
+                onChange={(e) => setState(prev => ({ ...prev, searchQuery: e.target.value }))}
+                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                className="search-input"
+              />
               <button 
                 onClick={handleSearch}
                 disabled={state.loading || !state.searchQuery.trim()}
-                className="search-bar__button"
+                className="search-button"
               >
                 Search
               </button>
             </div>
           </div>
-
-          <div className="toolbar__section">
-            <button 
-              onClick={handleToggleDashboard}
-              className={`toolbar__button ${state.showDashboard ? 'toolbar__button--active' : ''}`}
-              title="Toggle MRFG Dashboard"
-            >
-              <BarChart3 size={16} />
-              {state.showDashboard ? 'Hide Dashboard' : 'Show Dashboard'}
-            </button>
+          
+          <div className="compact-header__right">
+            <div className="account-selector">
+              <button
+                onClick={() => {
+                  if (state.mrfgAccount !== 'equita') {
+                    setState(prev => ({ ...prev, mrfgAccount: 'equita', firmIdNotice: null }));
+                  }
+                }}
+                className={`account-button ${state.mrfgAccount === 'equita' ? 'account-button--active' : ''}`}
+                title="Equita (Primary)"
+              >
+                Equita
+              </button>
+              <button
+                onClick={() => {
+                  if (state.mrfgAccount !== 'quility') {
+                    setState(prev => ({ ...prev, mrfgAccount: 'quility', firmIdNotice: null }));
+                  }
+                }}
+                className={`account-button ${state.mrfgAccount === 'quility' ? 'account-button--active' : ''}`}
+                title="Quility (Secondary)"
+              >
+                Quility
+              </button>
+            </div>
             
+            <div className="header-actions">
+              <button 
+                onClick={handleRefresh}
+                disabled={state.loading}
+                className="header-action-button"
+                title="Refresh"
+              >
+                <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
+              </button>
+              
+              <APITestButton onOpenDebugPanel={onOpenDebugPanel} />
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Action Cards */}
+        <div className="quick-actions">
+          <div className="quick-actions__stats">
+            <div className="quick-stat-card">
+              <Building2 size={20} />
+              <div className="quick-stat-content">
+                <span className="quick-stat-value">{stats.branches}</span>
+                <span className="quick-stat-label">Branches</span>
+              </div>
+            </div>
+            
+            <div className="quick-stat-card">
+              <Users size={20} />
+              <div className="quick-stat-content">
+                <span className="quick-stat-value">{stats.producers}</span>
+                <span className="quick-stat-label">Producers</span>
+              </div>
+            </div>
+            
+            <div className="quick-stat-card">
+              <Shield size={20} />
+              <div className="quick-stat-content">
+                <span 
+                  className="quick-stat-value" 
+                  style={{color: state.enhancedProfiles.size > 0 ? '#22c55e' : '#6b7280'}}
+                >
+                  {state.enhancedProfiles.size}
+                </span>
+                <span className="quick-stat-label">Enhanced</span>
+              </div>
+            </div>
+          </div>
+          
+          <div className="quick-actions__controls">
             <button 
               onClick={async () => {
                 if (state.tree && !state.bulkDataLoading) {
@@ -1314,136 +1442,91 @@ const OrgChart: React.FC<OrgChartProps> = ({
                 }
               }}
               disabled={state.bulkDataLoading || !state.tree}
-              className="toolbar__button"
-              title="Manually load MRFG data"
+              className="quick-action-button"
+              title="Load MRFG Data"
             >
-              <Users size={16} />
-              Load MRFG Data
+              <Users size={18} />
+              <span>Load Data</span>
             </button>
             
-            <button 
-              onClick={handleToggleMRFGFocus}
-              className={`toolbar__button ${state.showMRFGFocus ? 'toolbar__button--active' : ''}`}
-              title="Focus on MRFG producers only"
-            >
-              {state.showMRFGFocus ? <Eye size={16} /> : <EyeOff size={16} />}
-              MRFG Focus
-            </button>
-
-            {/* MRFG Admin Account Switcher */}
-            <button
-              onClick={() => {
-                if (state.mrfgAccount !== 'equita') {
-                  setState(prev => ({ ...prev, mrfgAccount: 'equita' }));
-                  // Reload data with Equita credentials
-                  loadHierarchyData(state.lastRefresh);
-                }
-              }}
-              className={`toolbar__button ${state.mrfgAccount === 'equita' ? 'toolbar__button--active' : ''}`}
-              title="Use Equita (Primary) SureLC credentials"
-            >
-              Equita (Primary)
-            </button>
-            <button
-              onClick={() => {
-                if (state.mrfgAccount !== 'quility') {
-                  setState(prev => ({ ...prev, mrfgAccount: 'quility' }));
-                  // Reload data with Quility credentials
-                  loadHierarchyData(state.lastRefresh);
-                }
-              }}
-              className={`toolbar__button ${state.mrfgAccount === 'quility' ? 'toolbar__button--active' : ''}`}
-              title="Use Quility (Secondary) SureLC credentials"
-            >
-              Quility (Secondary)
-            </button>
-            
-            <select 
-              value={state.complianceFilter}
-              onChange={(e) => handleComplianceFilterChange(e.target.value as any)}
-              className="toolbar__select"
-              title="Filter by compliance status"
-            >
-              <option value="all">All Compliance</option>
-              <option value="compliant">Compliant</option>
-              <option value="expiring">Expiring Soon</option>
-              <option value="expired">Expired</option>
-            </select>
-          </div>
-
-          <div className="toolbar__section">
             <button 
               onClick={() => setState(prev => ({ ...prev, showUpload: !prev.showUpload }))}
-              className={`toolbar__button ${state.showUpload ? 'toolbar__button--active' : ''}`}
-              title="Upload hierarchy data"
+              className={`quick-action-button ${state.showUpload ? 'quick-action-button--active' : ''}`}
+              title="Upload Data"
             >
-              <Upload size={16} />
-              {state.showUpload ? 'Hide Upload' : 'Upload Data'}
+              <Upload size={18} />
+              <span>Upload</span>
             </button>
             
             <button 
               onClick={handleCSVExport}
               disabled={state.loading || !relationsRef.current || relationsRef.current.length === 0}
-              className="toolbar__button toolbar__button--export"
-              title="Export hierarchy data to CSV"
+              className="quick-action-button"
+              title="Export CSV"
             >
-              <Download size={16} />
-              Export CSV
+              <Download size={18} />
+              <span>Export</span>
             </button>
             
             <button 
-              onClick={handleRefresh}
-              disabled={state.loading}
-              className="toolbar__button toolbar__button--refresh"
-              title="Refresh hierarchy data"
+              onClick={handleToggleDashboard}
+              className={`quick-action-button ${state.showDashboard ? 'quick-action-button--active' : ''}`}
+              title="Dashboard"
             >
-              <RefreshCw size={16} className={state.loading ? 'animate-spin' : ''} />
-              Refresh
+              <BarChart3 size={18} />
+              <span>Dashboard</span>
             </button>
             
-            <APITestButton />
-          </div>
-        </div>
-
-        <div className="stats-bar">
-          <div className="stats-bar__group">
-            <div className="stat-item">
-              <span className="stat-item__value">{stats.branches}</span>
-              <span className="stat-item__label">Branches</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-item__value">{stats.producers}</span>
-              <span className="stat-item__label">Producers</span>
-            </div>
-            <div className="stat-item">
-              <span className="stat-item__value" style={{color: state.enhancedProfiles.size > 0 ? '#22c55e' : '#6b7280'}}>
-                {state.enhancedProfiles.size}
-              </span>
-              <span className="stat-item__label">Enhanced Profiles</span>
+            <button 
+              onClick={handleToggleMRFGFocus}
+              className={`quick-action-button ${state.showMRFGFocus ? 'quick-action-button--active' : ''}`}
+              title="MRFG Focus"
+            >
+              {state.showMRFGFocus ? <Eye size={18} /> : <EyeOff size={18} />}
+              <span>MRFG</span>
+            </button>
+            
+            <div className="filter-dropdown">
+              <select 
+                value={state.complianceFilter}
+                onChange={(e) => handleComplianceFilterChange(e.target.value as any)}
+                className="filter-select"
+                title="Filter by compliance status"
+              >
+                <option value="all">All Compliance</option>
+                <option value="compliant">Compliant</option>
+                <option value="expiring">Expiring Soon</option>
+                <option value="expired">Expired</option>
+              </select>
             </div>
           </div>
           
-          <div className="stats-bar__group">
+          <div className="quick-actions__status">
             {state.loadingProgress.isLoading && (
-              <div className="progress-info">
-                <div className="progress-info__bar">
+              <div className="loading-progress">
+                <span className="loading-text">
+                  Loading... {state.loadingProgress.loaded}/{state.loadingProgress.total}
+                </span>
+                <div className="progress-bar">
                   <div 
-                    className="progress-info__fill"
+                    className="progress-fill"
                     style={{
                       width: `${(state.loadingProgress.loaded / state.loadingProgress.total) * 100}%`
                     }}
                   />
                 </div>
-                <span className="progress-info__text">
-                  Loading names... {state.loadingProgress.loaded}/{state.loadingProgress.total}
-                </span>
               </div>
             )}
-            <span className="last-updated">
-              Last Updated: {new Date(state.lastRefresh).toLocaleString()}
-            </span>
+            
+            <div className="last-updated">
+              <span className="last-updated-label">Updated:</span>
+              <span className="last-updated-value">
+                {new Date(state.lastRefresh).toLocaleString()}
+              </span>
+            </div>
           </div>
         </div>
+
         
       </header>
 
@@ -1471,10 +1554,21 @@ const OrgChart: React.FC<OrgChartProps> = ({
           </div>
         )}
 
+        {!state.error && state.firmIdNotice && (
+          <div className="warning-message">
+            <AlertTriangle size={16} />
+            {state.firmIdNotice}
+          </div>
+        )}
+
         {state.loading && (
           <div className="loading-message">
-            <RefreshCw size={16} className="spinning" />
-            Loading hierarchy data...
+            <div className="loading-spinner-container">
+              <RefreshCw size={24} className="animate-spin" />
+            </div>
+            <div className="loading-text">
+              Loading hierarchy data...
+            </div>
           </div>
         )}
 
@@ -1529,6 +1623,7 @@ const OrgChart: React.FC<OrgChartProps> = ({
           isOpen={!!state.selectedProducerId}
           onClose={() => setState(prev => ({ ...prev, selectedProducerId: null }))}
           onRefresh={handleRefreshProducer}
+          fetchAuth={fetchAuth}
         />
       </main>
     </div>

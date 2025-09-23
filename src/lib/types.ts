@@ -83,7 +83,7 @@ export type OrgChartProps = {
   initialDate?: string;
   pageLimit?: number;
   fetchAuth: () => string;
-  onSelectProducer?: (producerId: number) => void;
+  onOpenDebugPanel?: () => void;
 };
 
 export type Producer = {

@@ -16,6 +16,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import type { EnhancedProducerProfile } from '../lib/types';
+import { getCarrierName, buildCarrierLookupCache, buildCarrierLookupFromAppointmentData } from '../lib/api';
 import './ProducerDetailPanel.css';
 
 interface ProducerDetailPanelProps {
@@ -23,15 +24,19 @@ interface ProducerDetailPanelProps {
   isOpen: boolean;
   onClose: () => void;
   onRefresh?: (producerId: number) => void;
+  fetchAuth: () => string;
 }
 
 const ProducerDetailPanel: React.FC<ProducerDetailPanelProps> = ({
   profile,
   isOpen,
   onClose,
-  onRefresh
+  onRefresh,
+  fetchAuth
 }) => {
   const [activeTab, setActiveTab] = useState<'overview' | 'licenses' | 'appointments' | 'contracts' | 'addresses'>('overview');
+  const [carrierNames, setCarrierNames] = useState<Map<number, string>>(new Map());
+  const [carrierLookupLoading, setCarrierLookupLoading] = useState(false);
   
   // Debug logging
   React.useEffect(() => {
@@ -50,10 +55,80 @@ const ProducerDetailPanel: React.FC<ProducerDetailPanelProps> = ({
     }
   }, [profile, isOpen]);
 
+  // Function to resolve carrier names for appointments and contracts
+  const resolveCarrierNames = async () => {
+    if (!profile || carrierLookupLoading) return;
+    
+    console.log(`🔍 DEBUG: Starting carrier name resolution for producer ${profile.basic.id}`);
+    console.log(`🔍 DEBUG: Profile appointments:`, profile.appointments);
+    console.log(`🔍 DEBUG: Profile contracts:`, profile.contracts);
+    
+    setCarrierLookupLoading(true);
+    try {
+      // Extract unique carrier IDs from appointments and contracts
+      const carrierIds = new Set<number>();
+      
+      // Get carrier IDs from appointments
+      profile.appointments.forEach(appointment => {
+        const carrierId = getFieldValue(appointment, ['carrierId', 'carrier_id', 'id', 'carrier']);
+        if (carrierId && typeof carrierId === 'number') {
+          carrierIds.add(carrierId);
+        }
+      });
+      
+      // Get carrier IDs from contracts
+      profile.contracts.forEach(contract => {
+        const carrierId = getFieldValue(contract, ['carrierId', 'carrier_id', 'id', 'carrier']);
+        if (carrierId && typeof carrierId === 'number') {
+          carrierIds.add(carrierId);
+        }
+      });
+      
+      console.log(`🔍 DEBUG: Found carrier IDs:`, Array.from(carrierIds));
+      
+      if (carrierIds.size === 0) {
+        console.log(`📊 No carrier IDs found in appointment/contract data`);
+        setCarrierNames(new Map());
+        setCarrierLookupLoading(false);
+        return;
+      }
+      
+      // Get auth token from parent component
+      const token = fetchAuth();
+      
+      // Build carrier lookup cache (this will try multiple methods)
+      await buildCarrierLookupCache(token);
+      
+      // Resolve carrier names using the cache
+      const newCarrierNames = new Map<number, string>();
+      for (const carrierId of carrierIds) {
+        const carrierName = await getCarrierName(carrierId, token);
+        if (carrierName) {
+          newCarrierNames.set(carrierId, carrierName);
+        }
+      }
+      
+      setCarrierNames(newCarrierNames);
+      console.log(`✅ Resolved ${newCarrierNames.size} carrier names from API`);
+      
+      if (newCarrierNames.size === 0) {
+        console.warn('⚠️ No carrier names were resolved. This might be due to API permissions or data availability.');
+      }
+    } catch (error) {
+      console.error('❌ Error resolving carrier names:', error);
+      // Set empty map to indicate lookup failed
+      setCarrierNames(new Map());
+    } finally {
+      setCarrierLookupLoading(false);
+    }
+  };
+
   useEffect(() => {
     // Reset to overview tab when profile changes
     if (profile) {
       setActiveTab('overview');
+      // Resolve carrier names when profile changes
+      resolveCarrierNames();
     }
   }, [profile?.basic.id]);
 
@@ -354,7 +429,14 @@ const ProducerDetailPanel: React.FC<ProducerDetailPanelProps> = ({
         <div className="appointments-list">
           {appointments.map((appointment, index) => {
             // Try multiple possible field names for each property
-            const carrierName = getFieldValue(appointment, ['carrierName', 'carrier', 'companyName', 'company', 'name']);
+            let carrierName = getFieldValue(appointment, ['carrierName', 'carrier', 'companyName', 'company', 'name']);
+            const carrierId = getFieldValue(appointment, ['carrierId', 'carrier_id', 'id', 'carrier']);
+            
+            // If no carrier name found, try to resolve from carrier ID using our lookup cache
+            if (!carrierName && carrierId && typeof carrierId === 'number') {
+              carrierName = carrierNames.get(carrierId) || null;
+            }
+            
             const agentNumber = getFieldValue(appointment, ['agentNumber', 'agentId', 'number', 'id', 'appointmentId']);
             const appointmentDate = getFieldValue(appointment, ['appointmentDate', 'dateAppointed', 'effectiveDate', 'startDate', 'appointedDate']);
             const terminationDate = getFieldValue(appointment, ['terminationDate', 'dateTerminated', 'endDate', 'terminatedDate']);
@@ -366,7 +448,9 @@ const ProducerDetailPanel: React.FC<ProducerDetailPanelProps> = ({
               <div key={appointment.id || index} className="appointment-card">
                 <div className="appointment-header">
                   <div className="appointment-info">
-                    <h4 className="carrier-name">{carrierName || 'Unknown Carrier'}</h4>
+                    <h4 className="carrier-name">
+                      {carrierName || (carrierLookupLoading ? 'Loading...' : (carrierNames.size === 0 ? 'Carrier Lookup Unavailable' : 'Unknown Carrier'))}
+                    </h4>
                     <p className="appointment-details">
                       {state || 'N/A'} {agentNumber && `• Agent #${agentNumber}`}
                     </p>
@@ -418,7 +502,14 @@ const ProducerDetailPanel: React.FC<ProducerDetailPanelProps> = ({
         <div className="contracts-list">
           {contracts.map((contract, index) => {
             // Try multiple possible field names for each property
-            const carrierName = getFieldValue(contract, ['carrierName', 'carrier', 'companyName', 'company', 'name']);
+            let carrierName = getFieldValue(contract, ['carrierName', 'carrier', 'companyName', 'company', 'name']);
+            const carrierId = getFieldValue(contract, ['carrierId', 'carrier_id', 'id', 'carrier']);
+            
+            // If no carrier name found, try to resolve from carrier ID using our lookup cache
+            if (!carrierName && carrierId && typeof carrierId === 'number') {
+              carrierName = carrierNames.get(carrierId) || null;
+            }
+            
             const contractNumber = getFieldValue(contract, ['contractNumber', 'number', 'id', 'contractId', 'reference']);
             const effectiveDate = getFieldValue(contract, ['effectiveDate', 'startDate', 'dateEffective', 'beginDate']);
             const terminationDate = getFieldValue(contract, ['terminationDate', 'endDate', 'dateTerminated', 'expirationDate']);
@@ -429,7 +520,9 @@ const ProducerDetailPanel: React.FC<ProducerDetailPanelProps> = ({
               <div key={contract.id || index} className="contract-card">
                 <div className="contract-header">
                   <div className="contract-info">
-                    <h4 className="carrier-name">{carrierName || 'Unknown Carrier'}</h4>
+                    <h4 className="carrier-name">
+                      {carrierName || (carrierLookupLoading ? 'Loading...' : (carrierNames.size === 0 ? 'Carrier Lookup Unavailable' : 'Unknown Carrier'))}
+                    </h4>
                     <p className="contract-number">{contractNumber ? `Contract #${contractNumber}` : 'N/A'}</p>
                   </div>
                   <span className={getStatusBadge(status)}>

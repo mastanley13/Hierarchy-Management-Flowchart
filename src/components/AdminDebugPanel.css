@@ -99,6 +99,95 @@
   background: #4b5563;
 }
 
+.debug-button.tertiary {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+}
+
+.debug-button.tertiary:hover:not(:disabled) {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+}
+
+.debug-button.quaternary {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fbbf24;
+}
+
+.debug-button.quaternary:hover:not(:disabled) {
+  background: #fde68a;
+  border-color: #f59e0b;
+}
+
+.setup-instructions {
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 12px;
+}
+
+.setup-instructions h4 {
+  margin: 0 0 12px 0;
+  color: #92400e;
+  font-size: 1rem;
+}
+
+.setup-instructions p {
+  margin: 8px 0;
+  color: #92400e;
+  font-size: 0.9rem;
+}
+
+.setup-instructions pre {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 4px;
+  padding: 12px;
+  margin: 8px 0;
+  font-family: 'Courier New', monospace;
+  font-size: 0.8rem;
+  color: #92400e;
+  overflow-x: auto;
+}
+
+.setup-instructions code {
+  background: #fef3c7;
+  border: 1px solid #f59e0b;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+  color: #92400e;
+}
+
+.test-section {
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 12px;
+  margin: 8px 0;
+}
+
+.test-section h4 {
+  margin: 0 0 8px 0;
+  color: #1e293b;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.csv-report-item {
+  margin: 4px 0;
+  padding: 4px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.csv-report-item:last-child {
+  border-bottom: none;
+}
+
 .debug-loading {
   display: flex;
   flex-direction: column;
@@ -296,4 +385,6 @@
     justify-content: center;
   }
 }
+
+
 

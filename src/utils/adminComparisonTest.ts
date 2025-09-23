@@ -3,8 +3,7 @@ import {
   fetchFirmRelationsAfter, 
   fetchFirmDetails,
   fetchProducerLabel,
-  fetchProducerRelationship,
-  clearAllCaches
+  fetchProducerRelationship
 } from '../lib/api';
 import { getMRFGCredentialConfig, type MRFGAdminSet } from '../lib/credentials';
 
@@ -189,4 +188,6 @@ export async function quickAdminTest(): Promise<void> {
     console.error('❌ Quick test failed:', error);
   }
 }
+
+
 

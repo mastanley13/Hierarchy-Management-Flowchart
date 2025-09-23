@@ -61,7 +61,6 @@ Goal: Build and render an org chart tailored to the “Major Revolution Financia
 
 ### 4) Tailoring to “Major Revolution Financial Group”
 
-- Default firm: `323` (based on current evidence; verify at runtime).
 - Default branch filter: `'Major Revolution Financial Group'` (exact match of `branchCode`).
 - UI affordances:
   - If the branch isn’t found, show a non-blocking banner with available branchCode samples and allow toggling the branch filter off.

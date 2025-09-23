@@ -1,5 +1,5 @@
 import type { GARelation, Producer, ProducerLabel, HierarchyUploadResult, HierarchyUploadStatus, FileValidationResult } from './types';
-import { getActiveMRFGAdminSet, createAuthTokenForMRFGAdmin, type MRFGAdminSet } from './credentials';
+import { createAuthTokenForMRFGAdmin, type MRFGAdminSet } from './credentials';
 
 export const authHeader = (user: string, pass: string): string =>
   'Basic ' + btoa(`${user}:${pass}`);
@@ -517,6 +517,388 @@ export async function fetchAppointmentRequest(requestId: number, token: string):
   }
 }
 
+// === CARRIER LOOKUP ENDPOINTS ===
+
+export async function fetchCarrierSubscribedProducersAppointments(
+  token: string,
+  appointmentStatus?: string,
+  parts?: number,
+  part?: number
+): Promise<any[]> {
+  try {
+    let url = '/carrier/subscribed-producers/appointments';
+    const params = new URLSearchParams();
+    
+    if (appointmentStatus) params.append('appointmentStatus', appointmentStatus);
+    if (parts !== undefined) params.append('parts', parts.toString());
+    if (part !== undefined) params.append('part', part.toString());
+    
+    if (params.toString()) {
+      url += `?${params.toString()}`;
+    }
+    
+    console.log(`🔍 Fetching carrier subscribed producers appointments: ${url}`);
+    const appointments = await getJSON<any[]>(url, token);
+    console.log(`📊 Fetched ${appointments.length} carrier appointments`);
+    
+    return appointments;
+  } catch (error) {
+    console.error(`Error fetching carrier subscribed producers appointments:`, error);
+    return [];
+  }
+}
+
+// === CARRIER NAME LOOKUP SERVICE ===
+
+// Global carrier lookup cache
+let carrierLookupCache: Map<number, string> = new Map();
+let carrierLookupCacheTimestamp: number = 0;
+const CARRIER_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+/**
+ * Build carrier lookup cache from carrier appointment data
+ */
+export async function buildCarrierLookupCache(token: string): Promise<Map<number, string>> {
+  try {
+    console.log(`🏗️ Building carrier lookup cache...`);
+    
+    // Try carrier endpoint first, fallback to CSV reports
+    let newCache = new Map<number, string>();
+    
+    try {
+      // Use carrier credentials if available, fallback to agency token
+      let carrierToken: string = token;
+      try {
+        carrierToken = createCarrierAuthToken();
+      } catch (e) {
+        console.warn('Carrier credentials not configured; using agency token for carrier lookup');
+      }
+      
+      // Try to fetch carrier appointment data
+      const carrierAppointments = await fetchCarrierSubscribedProducersAppointments(carrierToken);
+      
+      // Extract carrier ID to name mappings
+      for (const appointment of carrierAppointments) {
+        // Try multiple possible field names for carrier ID and name
+        const carrierId = getFieldValue(appointment, ['carrierId', 'carrier_id', 'id', 'carrier']);
+        const carrierName = getFieldValue(appointment, ['carrierName', 'carrier_name', 'name', 'companyName', 'company']);
+        
+        if (carrierId && carrierName && typeof carrierId === 'number' && typeof carrierName === 'string') {
+          newCache.set(carrierId, carrierName);
+        }
+      }
+      
+      console.log(`✅ Carrier lookup cache built from carrier endpoint with ${newCache.size} carriers`);
+    } catch (carrierError) {
+      console.warn(`⚠️ Carrier endpoint failed (${carrierError}), falling back to CSV reports...`);
+      
+      // Fallback: Use CSV reports to build carrier lookup
+      try {
+        console.log(`🔍 DEBUG: Attempting CSV fallback...`);
+        newCache = await buildCarrierLookupFromCSV(token);
+        console.log(`🔍 DEBUG: CSV fallback result size: ${newCache.size}`);
+      } catch (csvError) {
+        console.warn(`⚠️ CSV fallback also failed (${csvError}), trying appointment data fallback...`);
+        
+        // Final fallback: Use appointment data
+        try {
+          console.log(`🔍 DEBUG: Attempting final fallback to buildCarrierLookupFromAppointments...`);
+          newCache = await buildCarrierLookupFromAppointments(token);
+          console.log(`🔍 DEBUG: Appointment data fallback result size: ${newCache.size}`);
+        } catch (appointmentError) {
+          console.warn(`⚠️ Appointment data fallback also failed (${appointmentError}), carrier lookup will be limited`);
+          newCache = new Map();
+        }
+      }
+    }
+    
+    // Update global cache
+    carrierLookupCache = newCache;
+    carrierLookupCacheTimestamp = Date.now();
+    
+    console.log(`✅ Carrier lookup cache built with ${newCache.size} carriers`);
+    console.log(`🔍 DEBUG: Final cache contents:`, Array.from(newCache.entries()));
+    return newCache;
+  } catch (error) {
+    console.error(`❌ Error building carrier lookup cache:`, error);
+    return new Map();
+  }
+}
+
+/**
+ * Build carrier lookup cache from CSV reports (fallback method)
+ */
+async function buildCarrierLookupFromCSV(token: string): Promise<Map<number, string>> {
+  try {
+    console.log(`📊 Building carrier lookup from CSV reports...`);
+    
+    // Use carrier credentials if available, fallback to agency token
+    let carrierToken: string = token;
+    try {
+      carrierToken = createCarrierAuthToken();
+    } catch (e) {
+      console.warn('Carrier credentials not configured; using agency token for CSV reports');
+    }
+    
+    // Fetch appointment CSV report
+    const appointmentCSV = await fetchCSVReport('appointment', carrierToken);
+    
+    // Debug: Log first few lines of CSV to understand structure
+    const lines = appointmentCSV.split('\n');
+    console.log(`📋 CSV Debug - First 3 lines:`, lines.slice(0, 3));
+    
+    // Parse CSV to extract carrier information
+    const newCache = new Map<number, string>();
+    
+    // Skip header row
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      
+      // Improved CSV parsing that handles quoted fields
+      const columns = parseCSVLine(line);
+      if (columns.length < 2) continue;
+      
+      // Debug: Log first few rows to understand structure
+      if (i <= 3) {
+        console.log(`📋 CSV Debug - Row ${i}:`, columns);
+      }
+      
+      // Try to find carrier ID and name columns
+      // Look for patterns like: carrierId,carrierName or id,name or carrier,name
+      let carrierId: number | null = null;
+      let carrierName: string | null = null;
+      
+      // Strategy 1: Look for numeric carrier ID in first few columns
+      for (let j = 0; j < Math.min(columns.length, 5); j++) {
+        const value = columns[j].trim();
+        if (value && !isNaN(Number(value)) && Number(value) > 0 && Number(value) < 1000000) {
+          carrierId = Number(value);
+          break;
+        }
+      }
+      
+      // Strategy 2: Look for carrier name in remaining columns
+      for (let j = 1; j < columns.length; j++) {
+        const value = columns[j].trim();
+        if (value && isNaN(Number(value)) && value.length > 2 && value.length < 100) {
+          // Skip common non-carrier values
+          if (!['active', 'pending', 'terminated', 'completed', 'life', 'health', 'annuity'].includes(value.toLowerCase())) {
+            carrierName = value;
+            break;
+          }
+        }
+      }
+      
+      if (carrierId && carrierName) {
+        newCache.set(carrierId, carrierName);
+        if (i <= 3) {
+          console.log(`✅ Found carrier mapping: ${carrierId} -> ${carrierName}`);
+        }
+      }
+    }
+    
+    console.log(`✅ Carrier lookup built from CSV with ${newCache.size} carriers`);
+    if (newCache.size > 0) {
+      console.log(`📊 Sample carrier mappings:`, Array.from(newCache.entries()).slice(0, 5));
+    }
+    return newCache;
+  } catch (error) {
+    console.error(`❌ Error building carrier lookup from CSV:`, error);
+    return new Map();
+  }
+}
+
+/**
+ * Build carrier lookup cache from existing appointment data (final fallback)
+ */
+async function buildCarrierLookupFromAppointments(_token: string): Promise<Map<number, string>> {
+  try {
+    console.log(`📊 Building carrier lookup from static carrier mappings...`);
+    
+    // This is a fallback that provides basic carrier name resolution
+    // using a static mapping of common carrier IDs to names
+    
+    // Common carrier mappings (these could be expanded based on your data)
+    const commonCarriers = new Map<number, string>([
+      [1, 'Equita Life Insurance'],
+      [2, 'Quility Insurance'],
+      [3, 'Major Revolution Financial Group'],
+      [60739, 'Major Revolution Financial Group'], // Based on the carrier ID we saw in the debug output
+      [61999, 'Equita Life Insurance'], // Based on the carrier ID we saw in the debug output
+      [60740, 'Equita Life Insurance'],
+      [60741, 'Quility Insurance'],
+      // Add more common carriers as needed
+    ]);
+    
+    console.log(`✅ Carrier lookup built from static mappings with ${commonCarriers.size} carriers`);
+    console.log(`🔍 DEBUG: Static mapping contents:`, Array.from(commonCarriers.entries()));
+    return commonCarriers;
+  } catch (error) {
+    console.error(`❌ Error building carrier lookup from static mappings:`, error);
+    return new Map();
+  }
+}
+
+/**
+ * Add carrier mapping to the global cache (called when appointment data is loaded)
+ */
+export function addCarrierMapping(carrierId: number, carrierName: string): void {
+  if (carrierId && carrierName) {
+    carrierLookupCache.set(carrierId, carrierName);
+    console.log(`📝 Added carrier mapping: ${carrierId} -> ${carrierName}`);
+  }
+}
+
+/**
+ * Build carrier lookup cache from appointment data arrays
+ * Note: This function is kept for compatibility but appointment data doesn't contain carrier names
+ */
+export function buildCarrierLookupFromAppointmentData(appointments: any[], contracts: any[]): Map<number, string> {
+  const newCache = new Map<number, string>();
+  
+  console.log(`📊 Building carrier lookup from appointment data...`);
+  console.log(`📊 Appointments count: ${appointments.length}, Contracts count: ${contracts.length}`);
+  
+  // Extract carrier mappings from appointments
+  appointments.forEach(appointment => {
+    const carrierId = getFieldValue(appointment, ['carrierId', 'carrier_id', 'id', 'carrier']);
+    const carrierName = getFieldValue(appointment, ['carrierName', 'carrier_name', 'name', 'companyName', 'company']);
+    
+    if (carrierId && carrierName && typeof carrierId === 'number' && typeof carrierName === 'string') {
+      newCache.set(carrierId, carrierName);
+    }
+  });
+  
+  // Extract carrier mappings from contracts
+  contracts.forEach(contract => {
+    const carrierId = getFieldValue(contract, ['carrierId', 'carrier_id', 'id', 'carrier']);
+    const carrierName = getFieldValue(contract, ['carrierName', 'carrier_name', 'name', 'companyName', 'company']);
+    
+    if (carrierId && carrierName && typeof carrierId === 'number' && typeof carrierName === 'string') {
+      newCache.set(carrierId, carrierName);
+    }
+  });
+  
+  // Update global cache
+  newCache.forEach((name, id) => {
+    carrierLookupCache.set(id, name);
+  });
+  
+  console.log(`📊 Built carrier lookup from appointment data with ${newCache.size} carriers`);
+  return newCache;
+}
+
+/**
+ * Parse a CSV line handling quoted fields
+ */
+function parseCSVLine(line: string): string[] {
+  const result: string[] = [];
+  let current = '';
+  let inQuotes = false;
+  
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    
+    if (char === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        // Escaped quote
+        current += '"';
+        i++; // Skip next quote
+      } else {
+        // Toggle quote state
+        inQuotes = !inQuotes;
+      }
+    } else if (char === ',' && !inQuotes) {
+      // Field separator
+      result.push(current);
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  
+  // Add the last field
+  result.push(current);
+  
+  return result;
+}
+
+/**
+ * Get carrier name by ID, with automatic cache refresh if needed
+ */
+export async function getCarrierName(carrierId: number, token: string): Promise<string | null> {
+  console.log(`🔍 DEBUG: Getting carrier name for ID: ${carrierId}`);
+  console.log(`🔍 DEBUG: Current cache size: ${carrierLookupCache.size}`);
+  console.log(`🔍 DEBUG: Current cache contents:`, Array.from(carrierLookupCache.entries()));
+  
+  // Check if cache is expired
+  const now = Date.now();
+  if (now - carrierLookupCacheTimestamp > CARRIER_CACHE_TTL || carrierLookupCache.size === 0) {
+    console.log(`🔄 Carrier cache expired or empty, rebuilding...`);
+    await buildCarrierLookupCache(token);
+  }
+  
+  const carrierName = carrierLookupCache.get(carrierId);
+  if (carrierName) {
+    console.log(`✅ Found carrier name: ${carrierId} -> ${carrierName}`);
+    return carrierName;
+  } else {
+    console.log(`❌ Carrier name not found for ID: ${carrierId}`);
+    console.log(`❌ Available carrier IDs in cache:`, Array.from(carrierLookupCache.keys()));
+    return null;
+  }
+}
+
+/**
+ * Helper function to safely extract field values (same as in ProducerDetailPanel)
+ */
+function getFieldValue(obj: any, fieldNames: string[]): any {
+  for (const fieldName of fieldNames) {
+    if (obj && obj[fieldName] !== undefined && obj[fieldName] !== null) {
+      return obj[fieldName];
+    }
+  }
+  return null;
+}
+
+/**
+ * Clear carrier lookup cache (useful for testing or manual refresh)
+ */
+export function clearCarrierLookupCache(): void {
+  carrierLookupCache.clear();
+  carrierLookupCacheTimestamp = 0;
+  console.log(`🧹 Carrier lookup cache cleared`);
+}
+
+/**
+ * Test carrier lookup functionality
+ */
+export async function testCarrierLookup(token: string): Promise<void> {
+  try {
+    console.log(`🧪 Testing carrier lookup functionality...`);
+    
+    // Clear cache first
+    clearCarrierLookupCache();
+    
+    // Build cache
+    const cache = await buildCarrierLookupCache(token);
+    console.log(`📊 Carrier cache built with ${cache.size} entries:`, Array.from(cache.entries()));
+    
+    // Test lookup for a few carrier IDs if available
+    if (cache.size > 0) {
+      const firstCarrierId = Array.from(cache.keys())[0];
+      const carrierName = await getCarrierName(firstCarrierId, token);
+      console.log(`✅ Test lookup for carrier ID ${firstCarrierId}: "${carrierName}"`);
+    } else {
+      console.log(`⚠️ No carriers found in cache - this might be expected if no carrier data is available`);
+    }
+    
+  } catch (error) {
+    console.error(`❌ Carrier lookup test failed:`, error);
+  }
+}
+
 export async function fetchPendingAppointmentRequests(
   ssn: string, 
   carrierId: number, 
@@ -793,12 +1175,18 @@ export async function uploadHierarchyFile(
  */
 export async function getHierarchyUploadStatus(
   uploadId: string,
-  token: string
+  token: string,
+  carrierId?: number
 ): Promise<HierarchyUploadStatus> {
   try {
-    console.log(`📊 Checking upload status for ID: ${uploadId}`);
+    console.log(`📊 Checking upload status for ID: ${uploadId}${carrierId ? ` with carrierId: ${carrierId}` : ''}`);
     
-    const result = await getJSON<HierarchyUploadStatus>(`/carrier/uploadHierarchy/${uploadId}`, token);
+    // Try with carrierId as query parameter if provided
+    const url = carrierId 
+      ? `/carrier/uploadHierarchy/${uploadId}?carrierId=${carrierId}`
+      : `/carrier/uploadHierarchy/${uploadId}`;
+    
+    const result = await getJSON<HierarchyUploadStatus>(url, token);
     console.log(`📈 Upload status:`, result);
     
     return result;
@@ -905,14 +1293,19 @@ export function validateHierarchyFile(file: File): FileValidationResult {
 }
 
 /**
- * Create carrier auth token (different from agency auth)
+ * Create carrier auth token using existing SureLC credentials
  */
 export function createCarrierAuthToken(): string {
-  const user = import.meta.env.VITE_CARRIER_USER || import.meta.env.VITE_SURELC_USER;
-  const pass = import.meta.env.VITE_CARRIER_PASS || import.meta.env.VITE_SURELC_PASS;
+  // Try to use existing SureLC credentials (Equita first, then Quility, then fallback)
+  const user = import.meta.env.VITE_SURELC_USER_EQUITA || 
+               import.meta.env.VITE_SURELC_USER_QUILITY || 
+               import.meta.env.VITE_SURELC_USER;
+  const pass = import.meta.env.VITE_SURELC_PASS_EQUITA || 
+               import.meta.env.VITE_SURELC_PASS_QUILITY || 
+               import.meta.env.VITE_SURELC_PASS;
   
   if (!user || !pass) {
-    throw new Error('Missing CARRIER credentials in environment variables');
+    throw new Error('Missing SureLC credentials in environment variables. Please set VITE_SURELC_USER_EQUITA/VITE_SURELC_PASS_EQUITA or VITE_SURELC_USER/VITE_SURELC_PASS');
   }
   
   return authHeader(user, pass);

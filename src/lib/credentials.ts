@@ -14,7 +14,7 @@ export function getMRFGCredentialConfig(set: MRFGAdminSet): MRFGCredentialConfig
       return {
         username: import.meta.env.VITE_SURELC_USER_EQUITA || import.meta.env.VITE_SURELC_USER || '',
         password: import.meta.env.VITE_SURELC_PASS_EQUITA || import.meta.env.VITE_SURELC_PASS || '',
-        firmId: parseInt(import.meta.env.VITE_FIRM_ID || '323'), // Same firm ID for both
+        firmId: parseInt(import.meta.env.VITE_FIRM_ID_EQUITA || import.meta.env.VITE_FIRM_ID || '323'),
         displayName: 'Major Revolution Financial Group',
         portalName: 'Equita SureLC Access'
       };
@@ -22,7 +22,7 @@ export function getMRFGCredentialConfig(set: MRFGAdminSet): MRFGCredentialConfig
       return {
         username: import.meta.env.VITE_SURELC_USER_QUILITY || '',
         password: import.meta.env.VITE_SURELC_PASS_QUILITY || '',
-        firmId: parseInt(import.meta.env.VITE_FIRM_ID || '323'), // Same firm ID for both
+        firmId: parseInt(import.meta.env.VITE_FIRM_ID_QUILITY || import.meta.env.VITE_FIRM_ID_EQUITA || import.meta.env.VITE_FIRM_ID || '323'),
         displayName: 'Major Revolution Financial Group',
         portalName: 'Quility SureLC Access'
       };
@@ -53,4 +53,6 @@ export function clearAPICache(): void {
     (window as any).clearAPICache();
   }
 }
+
+
 
