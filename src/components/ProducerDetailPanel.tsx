@@ -16,7 +16,7 @@ import {
   DollarSign
 } from 'lucide-react';
 import type { EnhancedProducerProfile } from '../lib/types';
-import { getCarrierName, buildCarrierLookupCache, buildCarrierLookupFromAppointmentData } from '../lib/api';
+import { getCarrierName, buildCarrierLookupCache } from '../lib/api';
 import './ProducerDetailPanel.css';
 
 interface ProducerDetailPanelProps {

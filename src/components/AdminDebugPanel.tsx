@@ -1,7 +1,6 @@
 import { useState } from 'react';
-import { Bug, Play, CheckCircle, XCircle, AlertTriangle, Building2, Database } from 'lucide-react';
+import { Bug, Play, CheckCircle, XCircle, AlertTriangle, Database } from 'lucide-react';
 import { compareAdminSets, quickAdminTest, type AdminTestResult } from '../utils/adminComparisonTest';
-import { createAuthToken } from '../lib/api';
 import { testAllHierarchyDataEndpoints } from '../utils/apiTest';
 import './AdminDebugPanel.css';
 

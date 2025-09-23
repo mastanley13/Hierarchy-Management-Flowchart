@@ -10,6 +10,35 @@ import {
   fetchProducerLabel,
   uploadHierarchyFile
 } from '../lib/api';
+import type { GARelation, ProducerLabel } from '../lib/types';
+
+type FirmRelationsResult =
+  | { success: true; count: number; sample: GARelation[] }
+  | { success: false; error: string };
+
+type ProducerRelationsResult =
+  | { success: true; producerId: number; data: GARelation | null }
+  | { success: false; error: string };
+
+type CsvReportResult =
+  | { success: true; lineCount: number; sample: string[] }
+  | { success: false; error: string };
+
+type FirmDetailsResult =
+  | { success: true; firmId: number; data: any }
+  | { success: false; error: string };
+
+type ProducerDetailsResult =
+  | { success: true; producerId: number; data: ProducerLabel }
+  | { success: false; error: string };
+
+interface HierarchyDataTestResults {
+  firmRelations: FirmRelationsResult | null;
+  producerRelations: ProducerRelationsResult | null;
+  csvReports: Record<string, CsvReportResult>;
+  firmDetails: FirmDetailsResult | null;
+  producerDetails: ProducerDetailsResult | null;
+}
 
 export async function testAPIEndpoints() {
   console.log('🔍 Testing API endpoints...');
@@ -59,8 +88,12 @@ export async function testHierarchyUploadStatusAPI() {
     const quilityPass = import.meta.env.VITE_SURELC_PASS_QUILITY;
     const surelcUser = import.meta.env.VITE_SURELC_USER;
     const surelcPass = import.meta.env.VITE_SURELC_PASS;
-    
-    if (!equitaUser && !quilityUser && !surelcUser) {
+
+    const hasEquitaCredentials = Boolean(equitaUser && equitaPass);
+    const hasQuilityCredentials = Boolean(quilityUser && quilityPass);
+    const hasGeneralCredentials = Boolean(surelcUser && surelcPass);
+
+    if (!hasEquitaCredentials && !hasQuilityCredentials && !hasGeneralCredentials) {
       console.error('❌ No SureLC credentials found!');
       console.log('📝 To fix this, create a .env file in your project root with:');
       console.log('   # Primary Equita Account:');
@@ -273,10 +306,10 @@ export async function testAllHierarchyDataEndpoints() {
     const token = createAuthToken();
     console.log('✅ Auth token created successfully');
     
-    const results = {
+    const results: HierarchyDataTestResults = {
       firmRelations: null,
       producerRelations: null,
-      csvReports: {},
+      csvReports: {} as Record<string, CsvReportResult>,
       firmDetails: null,
       producerDetails: null
     };
@@ -376,11 +409,11 @@ export async function testAllHierarchyDataEndpoints() {
       console.log(`❌ Individual Producer Relationships: ${results.producerRelations?.error}`);
     }
     
-    Object.entries(results.csvReports).forEach(([type, result]) => {
-      if (result.success) {
-        console.log(`✅ ${type.toUpperCase()} CSV Report: ${result.lineCount} lines available`);
+    Object.entries(results.csvReports).forEach(([type, report]) => {
+      if (report.success) {
+        console.log(`✅ ${type.toUpperCase()} CSV Report: ${report.lineCount} lines available`);
       } else {
-        console.log(`❌ ${type.toUpperCase()} CSV Report: ${result.error}`);
+        console.log(`❌ ${type.toUpperCase()} CSV Report: ${report.error}`);
       }
     });
     
@@ -403,10 +436,12 @@ export async function testAllHierarchyDataEndpoints() {
     console.log('- Combine data sources for comprehensive hierarchy view');
     
     // Determine overall success based on key endpoints working
-    const hasWorkingEndpoints = results.firmRelations?.success || 
-                               results.producerRelations?.success || 
-                               results.firmDetails?.success || 
-                               results.producerDetails?.success;
+    const hasWorkingEndpoints = Boolean(
+      results.firmRelations?.success ||
+      results.producerRelations?.success ||
+      results.firmDetails?.success ||
+      results.producerDetails?.success
+    );
     
     return {
       success: hasWorkingEndpoints,
