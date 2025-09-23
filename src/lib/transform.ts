@@ -98,11 +98,20 @@ function buildHierarchyTree(
     
     const producerNode = allProducerNodes.get(relation.producerId);
     if (producerNode) {
-      hierarchyMap.get(uplineKey)!.push(producerNode);
+      // Check if this producer is already in the upline group to prevent duplicates
+      const existingGroup = hierarchyMap.get(uplineKey)!;
+      if (!existingGroup.some(node => node.id === producerNode.id)) {
+        existingGroup.push(producerNode);
+      }
     }
   });
 
   console.log('Hierarchy groups:', Array.from(hierarchyMap.keys()));
+  
+  // Log deduplication statistics
+  const totalProducers = allProducerNodes.size;
+  const totalInHierarchy = Array.from(hierarchyMap.values()).reduce((sum, group) => sum + group.length, 0);
+  console.log(`Deduplication check: ${totalProducers} unique producers, ${totalInHierarchy} total entries in hierarchy`);
 
   // Build the tree recursively
   function buildSubTree(uplineKey: string, level: number = 0): ChartTree[] {
