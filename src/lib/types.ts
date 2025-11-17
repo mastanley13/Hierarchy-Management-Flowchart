@@ -247,3 +247,120 @@ export type FileValidationResult = {
   recordCount?: number;
   fileType?: 'excel' | 'csv';
 };
+
+// HighLevel hierarchy snapshot types
+
+export type GHLHierarchyNode = {
+  id: string;
+  label: string;
+  npn: string | null;
+  surelcId: string | null;
+  email: string | null;
+  companyName?: string | null;
+  customFields: Record<string, unknown>;
+  vendorFlags: {
+    equita: boolean;
+    quility: boolean;
+  };
+  vendorGroup?: 'equita' | 'quility' | 'combined';
+  licensingState: string | null;
+  compLevel: string | null;
+  compLevelNotes: string | null;
+  xcel: {
+    username: string;
+    tempPassword: string;
+    enrollmentDate: string;
+    dueDate: string;
+    lastTouch: string;
+  };
+  status: 'ACTIVE' | 'PENDING' | 'INACTIVE';
+  tags: string[];
+  uplineSource: 'npn' | 'surelc' | 'email' | 'unknown';
+  uplineConfidence: number;
+  level?: number;
+  nodeType?: 'root' | 'intermediate' | 'leaf';
+  metrics: {
+    directReports: number;
+    descendantCount: number;
+  };
+  flags: {
+    licensed: boolean;
+    xcelAccountCreated: boolean;
+    xcelStarted: boolean;
+    xcelPaid: boolean;
+    equitaProfile: boolean;
+    quilityProfile: boolean;
+  };
+  issues: {
+    missingNpn: boolean;
+    duplicateNpn: boolean;
+    uplineNotFound: boolean;
+    cycleBreak: boolean;
+  };
+  raw: {
+    uplineProducerId: string | null;
+    uplineEmail: string | null;
+    uplineName: string | null;
+    uplineHighestStage: string | null;
+    surelcId: string | null;
+  };
+  children: GHLHierarchyNode[];
+};
+
+export type GHLIssueContactSummary = {
+  id: string;
+  name: string;
+  npn: string | null;
+  uplineProducerId: string | null;
+  uplineEmail: string | null;
+};
+
+export type GHLDuplicateGroup = {
+  npn: string;
+  contacts: GHLIssueContactSummary[];
+};
+
+export type GHLIssueGroup = {
+  count: number;
+  contacts: GHLIssueContactSummary[];
+};
+
+export type GHLIssueSummary = {
+  missingNpn: GHLIssueGroup;
+  uplineNotFound: GHLIssueGroup;
+  cycleBreaks: GHLIssueGroup;
+  duplicateNpn: {
+    count: number;
+    groups: GHLDuplicateGroup[];
+  };
+};
+
+export type GHLSnapshotStats = {
+  branches: number;
+  producers: number;
+  enhanced: number;
+};
+
+export type GHLCustomFieldDefinition = {
+  id: string;
+  name: string;
+  model?: string;
+  fieldKey: string;
+  placeholder?: string;
+  dataType: string;
+  position?: number;
+  documentType?: string;
+  parentId?: string | null;
+  locationId?: string;
+  picklistOptions?: string[];
+  isAllowedCustomOption?: boolean;
+  standard: boolean;
+};
+
+export type GHLSnapshot = {
+  generatedAt: string;
+  customFieldDefs: GHLCustomFieldDefinition[];
+  stats: GHLSnapshotStats;
+  issues: GHLIssueSummary;
+  hierarchy: GHLHierarchyNode[];
+};

@@ -1,0 +1,15 @@
+link parent via: parentId = first(npnToContactIds[node.uplineNpn])
+if none → flag uplineNotFound
+if both upEq and upQu present and upEq != upQu → flag uplineConflict
+```
+
+### Testing Scenarios (Added)
+- Only `Upline Code Equita` set → resolves correctly.
+- Only `Upline Code Quility` set → resolves correctly.
+- Both set and equal → resolves; no conflict.
+- Both set and different → flags `uplineConflict`; honors precedence.
+- Upline code set but no contact has matching `NPN` → `uplineNotFound`.
+
+### Open Questions (Updated)
+- Do `Upline Code Equita`/`Quility` always contain NPNs, or can they contain non-NPN vendor codes? If vendor codes are possible, do we have direct contact fields for each agent’s own `Equita Code` / `Quility Code` to support mapping?
+- Which source should win if both upline fields are populated with different values? Is Equita-first acceptable, or should this be location-configurable?

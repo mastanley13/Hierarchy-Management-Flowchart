@@ -13,9 +13,13 @@
   "dependencies": {
     "@types/d3": "^7.4.3",
     "d3": "^7.8.5",
+    "elkjs": "^0.11.0",
+    "html-to-image": "^1.11.13",
     "lucide-react": "^0.263.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "reactflow": "^11.11.4",
+    "zustand": "^5.0.8"
   },
   "devDependencies": {
     "@types/react": "^18.2.15",

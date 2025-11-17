@@ -2,16 +2,17 @@ import { useState } from 'react';
 import OrgChart from './components/OrgChart';
 import AdminDebugPanel from './components/AdminDebugPanel';
 import { createAuthToken } from './lib/api';
-import { testAPIEndpoints } from './utils/apiTest';
-import './utils/debugTestRunner'; // Load debug utilities
+// import { testAPIEndpoints } from './utils/apiTest';
+// import './utils/debugTestRunner'; // Load debug utilities
 import './App.css';
 
 // Run API test to diagnose 500 errors (temporary)
-if (import.meta.env.DEV) {
-  setTimeout(() => {
-    testAPIEndpoints();
-  }, 3000);
-}
+// Disable auto API tests in dev to prevent unintended auth prompts / network noise
+// if (import.meta.env.DEV) {
+//   setTimeout(() => {
+//     testAPIEndpoints();
+//   }, 3000);
+// }
 
 function App() {
   const [showDebugPanel, setShowDebugPanel] = useState(false);
@@ -65,6 +66,20 @@ function App() {
             <span className="firm-name">Major Revolution Financial Group</span>
           </div>
           <div className="header-controls">
+            <button
+              className="upline-nav-button"
+              type="button"
+              onClick={() => window.location.assign('/upline')}
+            >
+              Upline Explorer
+            </button>
+            <button
+              className="upline-nav-button"
+              type="button"
+              onClick={() => window.location.assign('/visual-hierarchy')}
+            >
+              Visual Hierarchy
+            </button>
           </div>
         </div>
       </header>

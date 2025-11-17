@@ -1,0 +1,346 @@
+.hierarchy-card {
+  position: relative;
+  width: 100%;
+  transition: transform 0.2s ease;
+}
+
+.hierarchy-card__content {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  background: #ffffff;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 18px;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.25s ease, border 0.25s ease,
+    background-color 0.25s ease;
+  min-height: 72px;
+  position: relative;
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.08);
+}
+
+.hierarchy-card__content:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 3px;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.18);
+}
+
+.hierarchy-card__content:hover {
+  transform: translateX(4px);
+  border-color: #2563eb;
+  box-shadow: 0 22px 38px rgba(37, 99, 235, 0.14);
+}
+
+.hierarchy-card__line-indicator {
+  position: absolute;
+  left: -18px;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  background: linear-gradient(180deg, rgba(96, 165, 250, 0.55), rgba(37, 99, 235, 0));
+  border-radius: 12px;
+}
+
+.hierarchy-card__line-indicator::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 100%;
+  width: 24px;
+  height: 2px;
+  background: rgba(96, 165, 250, 0.6);
+  transform: translateY(-50%);
+}
+
+.hierarchy-card__chevron-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.hierarchy-card__chevron {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: none;
+  background: rgba(148, 163, 184, 0.12);
+  cursor: pointer;
+  color: #1f2937;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.hierarchy-card__chevron:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+}
+
+.hierarchy-card__chevron:hover {
+  background: rgba(37, 99, 235, 0.1);
+  color: #2563eb;
+}
+
+.hierarchy-card__chevron-spacer {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.hierarchy-card__body {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.hierarchy-card__avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.24), rgba(147, 197, 253, 0.24));
+  color: #1d4ed8;
+  font-weight: 700;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-transform: uppercase;
+  flex-shrink: 0;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+}
+
+.hierarchy-card__main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.hierarchy-card__title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hierarchy-card__name {
+  font-size: 15px;
+  font-weight: 600;
+  color: inherit;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hierarchy-card__meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: rgba(15, 23, 42, 0.8);
+}
+
+.hierarchy-card__meta {
+  position: relative;
+  padding-left: 14px;
+}
+
+.hierarchy-card__meta::before {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.35);
+  transform: translateY(-50%);
+}
+
+.hierarchy-card__badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.hierarchy-card__status-badge {
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+  background: rgba(148, 163, 184, 0.14);
+  color: #1f2937;
+}
+
+.hierarchy-card__status-badge.status-success {
+  background: rgba(34, 197, 94, 0.18);
+  color: #047857;
+}
+
+.hierarchy-card__status-badge.status-warning {
+  background: rgba(251, 191, 36, 0.25);
+  color: #92400e;
+}
+
+.hierarchy-card__status-badge.status-danger {
+  background: rgba(248, 113, 113, 0.22);
+  color: #b91c1c;
+}
+
+.hierarchy-card__status-badge.status-neutral {
+  background: rgba(148, 163, 184, 0.2);
+  color: #475569;
+}
+
+.hierarchy-card__vendor-badge {
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+  background: rgba(148, 163, 184, 0.14);
+  color: #1f2937;
+}
+
+.vendor-badge--equita {
+  background: rgba(37, 99, 235, 0.14);
+  color: #1d4ed8;
+}
+
+.vendor-badge--quility {
+  background: rgba(99, 102, 241, 0.16);
+  color: #4338ca;
+}
+
+.vendor-badge--both {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.18), rgba(99, 102, 241, 0.18));
+  color: #1e3a8a;
+}
+
+.hierarchy-card__badge-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: rgba(16, 185, 129, 0.18);
+  color: #047857;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: bold;
+}
+
+/* Level-specific styling */
+.hierarchy-card[data-level="0"] .hierarchy-card__content {
+  background: linear-gradient(135deg, #111c2e 0%, #1f2c41 90%);
+  color: #f8fafc;
+  border-color: rgba(15, 23, 42, 0.8);
+}
+
+.hierarchy-card[data-level="0"] .hierarchy-card__status-badge,
+.hierarchy-card[data-level="0"] .hierarchy-card__vendor-badge {
+  background: rgba(248, 250, 252, 0.22);
+  color: #f8fafc;
+}
+
+.hierarchy-card[data-level="0"] .hierarchy-card__meta-row {
+  color: rgba(248, 250, 252, 0.75);
+}
+
+.hierarchy-card[data-level="0"] .hierarchy-card__meta {
+  color: inherit;
+}
+
+.hierarchy-card[data-level="0"] .hierarchy-card__avatar {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(248, 250, 252, 0.25);
+  color: #f1f5f9;
+}
+
+.hierarchy-card[data-level="1"] .hierarchy-card__content {
+  background: linear-gradient(135deg, #1a2333 0%, #2e3a4f 90%);
+  color: #f8fafc;
+  border-color: rgba(51, 65, 85, 0.85);
+}
+
+.hierarchy-card[data-level="1"] .hierarchy-card__status-badge,
+.hierarchy-card[data-level="1"] .hierarchy-card__vendor-badge {
+  background: rgba(248, 250, 252, 0.22);
+  color: #f8fafc;
+}
+
+.hierarchy-card[data-level="1"] .hierarchy-card__meta-row {
+  color: rgba(248, 250, 252, 0.75);
+}
+
+.hierarchy-card[data-level="1"] .hierarchy-card__meta {
+  color: inherit;
+}
+
+.hierarchy-card[data-level="1"] .hierarchy-card__avatar {
+  background: rgba(51, 65, 85, 0.55);
+  border-color: rgba(248, 250, 252, 0.2);
+  color: #f8fafc;
+}
+
+.hierarchy-card[data-level="0"] .hierarchy-card__meta::before,
+.hierarchy-card[data-level="1"] .hierarchy-card__meta::before {
+  background: rgba(248, 250, 252, 0.4);
+}
+
+.hierarchy-card[data-level="0"] .hierarchy-card__chevron,
+.hierarchy-card[data-level="1"] .hierarchy-card__chevron {
+  background: rgba(248, 250, 252, 0.14);
+  color: #f8fafc;
+}
+
+.hierarchy-card[data-level="0"] .hierarchy-card__chevron:hover,
+.hierarchy-card[data-level="1"] .hierarchy-card__chevron:hover {
+  background: rgba(248, 250, 252, 0.22);
+  color: #f8fafc;
+}
+
+/* Compact mode */
+.hierarchy-card--compact .hierarchy-card__content {
+  padding: 10px 14px;
+  min-height: 56px;
+}
+
+.hierarchy-card--compact .hierarchy-card__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 14px;
+  font-size: 16px;
+}
+
+.hierarchy-card--compact .hierarchy-card__name {
+  font-size: 14px;
+}
+
+.hierarchy-card--compact .hierarchy-card__meta-row {
+  font-size: 11px;
+}
+
+.hierarchy-card--compact .hierarchy-card__status-badge,
+.hierarchy-card--compact .hierarchy-card__vendor-badge {
+  padding: 4px 8px;
+}

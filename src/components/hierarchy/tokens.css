@@ -1,0 +1,62 @@
+:root {
+  --bg-canvas: #0e1117;
+  --bg-card: #151a1f;
+  --bg-card-hover: #1b212d;
+  --bg-card-focus: #1f2937;
+  --text-primary: #edf2ff;
+  --text-secondary: #9ba6bf;
+  --text-tertiary: #73829e;
+  --accent: #60f5a1;
+  --accent-soft: #26463b;
+  --spine: #2b3445;
+  --lane-guide: rgba(107, 114, 128, 0.2);
+  --edge: rgba(148, 197, 255, 0.68);
+  --edge-rail: rgba(59, 130, 246, 0.28);
+  --edge-rail-highlight: rgba(124, 246, 196, 0.42);
+  --edge-highlight: #7cf6c4;
+  --edge-highlight-glow: rgba(124, 246, 196, 0.55);
+  --chip-active-bg: #064e3b;
+  --chip-active-text: #a7f3d0;
+  --chip-inactive-bg: #2d3341;
+  --chip-inactive-text: #cbd5f5;
+  --chip-pending-bg: #3f2f12;
+  --chip-pending-text: #fcd34d;
+  --ring: #7dd3fc;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --radius-lg: 18px;
+  --radius-sm: 10px;
+  --lane-gap-comfortable: 140px;
+  --lane-gap-cozy: 112px;
+  --lane-gap-compact: 88px;
+  --card-padding-comfortable: 16px 18px;
+  --card-padding-cozy: 14px 16px;
+  --card-padding-compact: 10px 14px;
+}
+
+/* Light theme overrides scoped to the VisualHierarchyPage container */
+.visual-hierarchy-page[data-theme='light'] {
+  --bg-canvas: #f7fafc;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f3f4f6;
+  --bg-card-focus: #e5e7eb;
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-tertiary: #64748b;
+  --accent: #10b981; /* emerald-500 */
+  --accent-soft: #dcfce7;
+  --spine: #d1d5db;
+  --lane-guide: rgba(100, 116, 139, 0.25);
+  --edge: rgba(37, 99, 235, 0.55);
+  --edge-rail: rgba(59, 130, 246, 0.25);
+  --edge-rail-highlight: rgba(16, 185, 129, 0.35);
+  --edge-highlight: #059669;
+  --edge-highlight-glow: rgba(16, 185, 129, 0.45);
+  --chip-active-bg: #dcfce7;
+  --chip-active-text: #166534;
+  --chip-inactive-bg: #eef2f7;
+  --chip-inactive-text: #334155;
+  --chip-pending-bg: #fef3c7;
+  --chip-pending-text: #92400e;
+  --ring: #0284c7;
+  --shadow: 0 10px 24px rgba(15, 23, 42, 0.18);
+}
