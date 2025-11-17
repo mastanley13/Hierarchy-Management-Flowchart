@@ -11,11 +11,9 @@ import {
   Focus,
   Maximize2,
   Minimize2,
-  Moon,
   RefreshCw,
   Search,
   Sparkles,
-  Sun,
   Target,
   Users,
 } from 'lucide-react';

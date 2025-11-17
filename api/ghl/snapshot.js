@@ -30,17 +30,18 @@ function loadEnvFallback() {
 
 loadEnvFallback();
 
-const HL_API_BASE = (process.env.HL_API_BASE || 'https://services.leadconnectorhq.com').trim();
-const HL_PRIVATE_API_KEY = (process.env.HL_PRIVATE_API_KEY || '').trim() || undefined;
-const HL_LOCATION_ID = (process.env.HL_LOCATION_ID || '').trim() || undefined;
-const RAW_PAGE_SIZE = Number.parseInt(process.env.HL_PAGE_SIZE || '100', 10);
-const PAGE_SIZE = Number.isNaN(RAW_PAGE_SIZE)
-  ? 100
-  : Math.min(Math.max(RAW_PAGE_SIZE, 1), 100);
-const MAX_CONTACTS = Number.parseInt(process.env.HL_MAX_CONTACTS || '2000', 10);
-
-const RATE_LIMIT_DELAY_MS = 200;
-const MAX_RETRIES = 5;
+const HL_API_BASE = (process.env.HL_API_BASE || 'https://services.leadconnectorhq.com').trim();
+const HL_PRIVATE_API_KEY = (process.env.HL_PRIVATE_API_KEY || '').trim() || undefined;
+const HL_LOCATION_ID = (process.env.HL_LOCATION_ID || '').trim() || undefined;
+const RAW_PAGE_SIZE = Number.parseInt(process.env.HL_PAGE_SIZE || '100', 10);
+const PAGE_SIZE = Number.isNaN(RAW_PAGE_SIZE)
+  ? 100
+  : Math.min(Math.max(RAW_PAGE_SIZE, 1), 100);
+const MAX_CONTACTS = Number.parseInt(process.env.HL_MAX_CONTACTS || '2000', 10);
+
+const RATE_LIMIT_DELAY_MS = 200;
+const MAX_RETRIES = 5;
+const SYNTHETIC_UPLINE_PREFIX = 'upline:';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -74,16 +75,70 @@ const normalizeEmail = (value) =>
 const safeTrim = (value) =>
   typeof value === 'string' ? value.trim() : '';
 
-const buildCors = (res) => {
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
-  res.setHeader(
+const buildCors = (res) => {
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,POST');
+  res.setHeader(
     'Access-Control-Allow-Headers',
     'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, Authorization'
-  );
-};
-
+  );
+};
+
+const buildSyntheticUplineNode = (uplineProducerId) => {
+  const label = `Upline ${uplineProducerId}`;
+  return {
+    id: `${SYNTHETIC_UPLINE_PREFIX}${uplineProducerId}`,
+    contactId: null,
+    firstName: 'Upline',
+    lastName: uplineProducerId,
+    name: label,
+    companyName: null,
+    email: null,
+    emailDisplay: null,
+    phone: null,
+    npn: uplineProducerId,
+    npnRaw: uplineProducerId,
+    surelcId: null,
+    surelcRaw: null,
+    uplineProducerId: null,
+    uplineProducerIdRaw: null,
+    uplineEmail: null,
+    uplineEmailRaw: null,
+    uplineName: label,
+    uplineNameRaw: label,
+    uplineHighestStage: null,
+    aggregator: {
+      equita: false,
+      quility: false,
+    },
+    flags: {
+      licensed: false,
+      xcelAccountCreated: false,
+      xcelStarted: false,
+      xcelPaid: false,
+      equitaProfile: false,
+      quilityProfile: false,
+    },
+    licensingState: '',
+    compLevel: '',
+    compLevelNotes: '',
+    xcel: {
+      username: '',
+      tempPassword: '',
+      enrollmentDate: '',
+      dueDate: '',
+      lastTouch: '',
+    },
+    parentId: null,
+    uplineSource: 'synthetic',
+    uplineConfidence: 1,
+    children: [],
+    customFields: {},
+    isSynthetic: true,
+  };
+};
+
 const ensureConfig = () => {
   if (!HL_PRIVATE_API_KEY) {
     throw new Error('HL_PRIVATE_API_KEY is not set');
@@ -171,14 +226,15 @@ const deriveStatus = (node) => {
   return 'INACTIVE';
 };
 
-function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
-  const nodes = [];
-  const nodesById = new Map();
-  const npnIndex = new Map();
-  const surelcIndex = new Map();
-  const emailIndex = new Map();
+function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
+  const nodes = [];
+  const nodesById = new Map();
+  const npnIndex = new Map();
+  const surelcIndex = new Map();
+  const emailIndex = new Map();
+  const uplineGroups = new Map();
 
-  rawContacts.forEach((contact) => {
+  rawContacts.forEach((contact) => {
     const custom = {};
     (contact.customFields || []).forEach((entry) => {
       const field = customFieldsMap.get(entry.id);
@@ -205,11 +261,11 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
     const uplineCodeEquita = isTruthy(custom['contact.upline_code_equita']);
     const uplineCodeQuility = isTruthy(custom['contact.upline_code_quility']);
 
-    const node = {
-      id: contact.id,
-      contactId: contact.id,
-      firstName: contact.firstNameRaw || contact.firstName || '',
-      lastName: contact.lastNameRaw || contact.lastName || '',
+    const node = {
+      id: contact.id,
+      contactId: contact.id,
+      firstName: contact.firstNameRaw || contact.firstName || '',
+      lastName: contact.lastNameRaw || contact.lastName || '',
       name: contact.contactName
         || [contact.firstNameRaw || contact.firstName, contact.lastNameRaw || contact.lastName].filter(Boolean).join(' ')
         || contact.email
@@ -244,28 +300,35 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
       licensingState: safeTrim(custom['contact.onboarding__licensing_state'] || ''),
       compLevel: safeTrim(custom['contact.onboarding__comp_level_mrfg'] || ''),
       compLevelNotes: safeTrim(custom['contact.custom_comp_level_notes'] || ''),
-      xcel: {
-        username: safeTrim(custom['contact.onboarding__xcel_username_email'] || ''),
-        tempPassword: safeTrim(custom['contact.onboarding__xcel_temp_password'] || ''),
-        enrollmentDate: safeTrim(custom['contact.xcel_enrollment_date'] || ''),
-        dueDate: safeTrim(custom['contact.xcel_due_date'] || ''),
-        lastTouch: safeTrim(custom['contact.xcel_last_touch'] || ''),
-      },
-      parentId: null,
-      uplineSource: 'unknown',
-      uplineConfidence: 0,
-      children: [],
-      customFields: custom,
-    };
+      xcel: {
+        username: safeTrim(custom['contact.onboarding__xcel_username_email'] || ''),
+        tempPassword: safeTrim(custom['contact.onboarding__xcel_temp_password'] || ''),
+        enrollmentDate: safeTrim(custom['contact.xcel_enrollment_date'] || ''),
+        dueDate: safeTrim(custom['contact.xcel_due_date'] || ''),
+        lastTouch: safeTrim(custom['contact.xcel_last_touch'] || ''),
+      },
+      parentId: null,
+      uplineSource: 'unknown',
+      uplineConfidence: 0,
+      children: [],
+      customFields: custom,
+      isSynthetic: false,
+    };
 
-    nodes.push(node);
-    nodesById.set(node.id, node);
-
-    if (npn) {
-      const entry = npnIndex.get(npn) || [];
-      entry.push(node.id);
-      npnIndex.set(npn, entry);
-    }
+    nodes.push(node);
+    nodesById.set(node.id, node);
+
+    if (node.uplineProducerId) {
+      const group = uplineGroups.get(node.uplineProducerId) || [];
+      group.push(node.id);
+      uplineGroups.set(node.uplineProducerId, group);
+    }
+
+    if (npn) {
+      const entry = npnIndex.get(npn) || [];
+      entry.push(node.id);
+      npnIndex.set(npn, entry);
+    }
 
     if (surelcId) {
       const entry = surelcIndex.get(surelcId) || [];
@@ -278,8 +341,22 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
       entry.push(node.id);
       emailIndex.set(node.email, entry);
     }
-  });
-
+  });
+
+  uplineGroups.forEach((_, uplineId) => {
+    if (!uplineId) return;
+    const hasNpn = npnIndex.has(uplineId);
+    const hasSurelc = surelcIndex.has(uplineId);
+    if (!hasNpn && !hasSurelc) {
+      const syntheticNode = buildSyntheticUplineNode(uplineId);
+      nodes.push(syntheticNode);
+      nodesById.set(syntheticNode.id, syntheticNode);
+      const entry = npnIndex.get(uplineId) || [];
+      entry.push(syntheticNode.id);
+      npnIndex.set(uplineId, entry);
+    }
+  });
+
   const duplicateNpnSet = new Set();
   npnIndex.forEach((ids) => {
     if (ids.length > 1) {
@@ -344,12 +421,12 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
       }
     }
 
-    if (!parentId && node.uplineEmail) {
-      const candidateByEmail = findCandidate(emailIndex.get(node.uplineEmail), node.id);
-      if (candidateByEmail && !wouldIntroduceCycle(node.id, candidateByEmail)) {
-        parentId = candidateByEmail;
-        source = 'email';
-        confidence = 0.6;
+    if (!parentId && !node.uplineProducerId && node.uplineEmail) {
+      const candidateByEmail = findCandidate(emailIndex.get(node.uplineEmail), node.id);
+      if (candidateByEmail && !wouldIntroduceCycle(node.id, candidateByEmail)) {
+        parentId = candidateByEmail;
+        source = 'email';
+        confidence = 0.6;
       } else if (candidateByEmail && wouldIntroduceCycle(node.id, candidateByEmail)) {
         cycleBreakSet.add(node.id);
       }
@@ -456,11 +533,11 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
     .map((rid) => buildTree(rid, 1))
     .filter(Boolean);
 
-  const stats = {
-    branches: hierarchy.length,
-    producers: nodes.filter((node) => !!node.npn).length,
-    enhanced: nodes.filter((node) => node.aggregator.equita || node.aggregator.quility).length,
-  };
+  const stats = {
+    branches: hierarchy.length,
+    producers: nodes.filter((node) => !!node.npn && !node.isSynthetic).length,
+    enhanced: nodes.filter((node) => node.aggregator.equita || node.aggregator.quility).length,
+  };
 
   const buildIssueGroup = (setOrList) => {
     if (!setOrList || setOrList.size === 0) {

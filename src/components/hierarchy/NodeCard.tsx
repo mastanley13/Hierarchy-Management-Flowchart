@@ -18,6 +18,11 @@ type NodeCardData = {
 const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
   const { person, density, expanded, isSelected, isDimmed, onToggle, onSelect, onHover } = data;
 
+  const uplineProducerId = person.sourceNode?.raw?.uplineProducerId || null;
+  const showNpnBadge = Boolean(person.npn);
+  const showUplineBadge = Boolean(uplineProducerId);
+  const showSyntheticBadge = person.sourceNode?.uplineSource === 'synthetic';
+
   const initials = useMemo(() => {
     const parts = person.name.split(' ').filter(Boolean);
     if (parts.length === 0) {
@@ -168,6 +173,15 @@ const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
       <div className="node-card__body">
         <div className="node-card__title-row node-card__title-row--stacked">
           <span className="node-card__name">{person.name}</span>
+          {(showNpnBadge || showUplineBadge || showSyntheticBadge) && (
+            <div className="node-card__badges">
+              {showNpnBadge && <span className="node-card__tag">NPN {person.npn}</span>}
+              {showUplineBadge && (
+                <span className="node-card__tag node-card__tag--upline">Upline {uplineProducerId}</span>
+              )}
+              {showSyntheticBadge && <span className="node-card__tag node-card__tag--synthetic">Synthetic Upline</span>}
+            </div>
+          )}
         </div>
         <div className="node-card__summary">{branchSummaryLine}</div>
         <div className="node-card__meta">

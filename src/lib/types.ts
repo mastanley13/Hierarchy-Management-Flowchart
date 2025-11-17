@@ -275,7 +275,7 @@ export type GHLHierarchyNode = {
   };
   status: 'ACTIVE' | 'PENDING' | 'INACTIVE';
   tags: string[];
-  uplineSource: 'npn' | 'surelc' | 'email' | 'unknown';
+  uplineSource: 'npn' | 'surelc' | 'email' | 'synthetic' | 'unknown';
   uplineConfidence: number;
   level?: number;
   nodeType?: 'root' | 'intermediate' | 'leaf';
