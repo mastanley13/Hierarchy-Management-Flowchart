@@ -40,6 +40,8 @@ import '../App.css';
 import './VisualHierarchyPage.css';
 
 const EXPANSION_STORAGE_KEY = 'visual-hierarchy-expanded-ids';
+const AUTO_EXPAND_CHILDREN_THRESHOLD = 6;
+const AUTO_EXPAND_MAX_DEPTH = 2;
 
 const statusMap: Record<GHLHierarchyNode['status'], PersonStatus> = {
   ACTIVE: 'active',
@@ -154,6 +156,11 @@ const VisualHierarchyPage: React.FC = () => {
     hydratedExpansionRef.current = false;
   }, [snapshot]);
 
+  const defaultExpandedIds = useMemo(
+    () => (graph ? computeDefaultExpandedIds(graph) : []),
+    [graph],
+  );
+
   useEffect(() => {
     if (!graph || hydratedExpansionRef.current) {
       return;
@@ -172,8 +179,8 @@ const VisualHierarchyPage: React.FC = () => {
         // ignore parse errors
       }
     }
-    setExpandedIds(graph.rootIds);
-  }, [graph, setExpandedIds]);
+    setExpandedIds(defaultExpandedIds.length ? defaultExpandedIds : graph.rootIds);
+  }, [graph, setExpandedIds, defaultExpandedIds]);
 
   useEffect(() => {
     if (expandedIds.size === 0) {
@@ -903,6 +910,20 @@ const buildHierarchyGraph = (
     },
     parentMap,
   };
+};
+
+const computeDefaultExpandedIds = (graph: HierarchyGraph) => {
+  const expanded = new Set(graph.rootIds);
+  graph.nodesById.forEach((node) => {
+    if (
+      node.childrenIds.length >= AUTO_EXPAND_CHILDREN_THRESHOLD &&
+      node.depth > 0 &&
+      node.depth <= AUTO_EXPAND_MAX_DEPTH
+    ) {
+      expanded.add(node.id);
+    }
+  });
+  return Array.from(expanded);
 };
 
 const downloadDataUrl = (dataUrl: string, filename: string) => {
