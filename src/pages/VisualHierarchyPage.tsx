@@ -729,54 +729,54 @@ const VisualHierarchyPage: React.FC = () => {
               </button>
             )}
             <h1>Visual Upline Hierarchy</h1>
-          </div>
-          <div className="visual-hierarchy-export-dropdown" ref={exportDropdownRef}>
-            <button
-              type="button"
-              className="visual-hierarchy-btn visual-hierarchy-btn--export"
-              onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
-            >
-              <Download size={16} />
-              Export
-              <ChevronDown size={14} />
-            </button>
-            {exportDropdownOpen && (
-              <div className="visual-hierarchy-export-dropdown__menu">
-                <button
-                  type="button"
-                  className="visual-hierarchy-export-dropdown__item"
-                  onClick={() => {
-                    handleExport('viewport-svg');
-                    setExportDropdownOpen(false);
-                  }}
-                >
-                  <Download size={16} />
-                  Export SVG
-                </button>
-                <button
-                  type="button"
-                  className="visual-hierarchy-export-dropdown__item"
-                  onClick={() => {
-                    handleExport('viewport-png');
-                    setExportDropdownOpen(false);
-                  }}
-                >
-                  <Download size={16} />
-                  Export PNG
-                </button>
-                <button
-                  type="button"
-                  className="visual-hierarchy-export-dropdown__item"
-                  onClick={() => {
-                    handleExport('full-svg');
-                    setExportDropdownOpen(false);
-                  }}
-                >
-                  <Download size={16} />
-                  Export Full Tree
-                </button>
-              </div>
-            )}
+            <div className="visual-hierarchy-export-dropdown" ref={exportDropdownRef}>
+              <button
+                type="button"
+                className="visual-hierarchy-btn visual-hierarchy-btn--export"
+                onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
+              >
+                <Download size={16} />
+                Export
+                <ChevronDown size={14} />
+              </button>
+              {exportDropdownOpen && (
+                <div className="visual-hierarchy-export-dropdown__menu">
+                  <button
+                    type="button"
+                    className="visual-hierarchy-export-dropdown__item"
+                    onClick={() => {
+                      handleExport('viewport-svg');
+                      setExportDropdownOpen(false);
+                    }}
+                  >
+                    <Download size={16} />
+                    Export SVG
+                  </button>
+                  <button
+                    type="button"
+                    className="visual-hierarchy-export-dropdown__item"
+                    onClick={() => {
+                      handleExport('viewport-png');
+                      setExportDropdownOpen(false);
+                    }}
+                  >
+                    <Download size={16} />
+                    Export PNG
+                  </button>
+                  <button
+                    type="button"
+                    className="visual-hierarchy-export-dropdown__item"
+                    onClick={() => {
+                      handleExport('full-svg');
+                      setExportDropdownOpen(false);
+                    }}
+                  >
+                    <Download size={16} />
+                    Export Full Tree
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         <div className="visual-hierarchy-stats">
           <div className="visual-hierarchy-stat-card">

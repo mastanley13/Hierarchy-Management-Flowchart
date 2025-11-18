@@ -37,10 +37,11 @@
 }
 
 .visual-hierarchy-header__content {
-  display: flex;
-  justify-content: center;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 16px;
+  position: relative;
 }
 
 .visual-hierarchy-back {
@@ -55,6 +56,7 @@
   font-size: 0.75rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
+  grid-column: 1;
   justify-self: start;
 }
 
@@ -70,12 +72,14 @@
   font-weight: 600;
   color: var(--text-primary);
   text-align: center;
+  grid-column: 2;
 }
 
 .visual-hierarchy-export-dropdown {
-  position: absolute;
-  top: 16px;
-  right: 24px;
+  position: relative;
+  z-index: 20;
+  grid-column: 3;
+  justify-self: end;
 }
 
 .visual-hierarchy-header p {
@@ -145,11 +149,6 @@
 
 .visual-hierarchy-btn--ghost {
   border-style: dashed;
-}
-
-.visual-hierarchy-export-dropdown {
-  position: relative;
-  display: inline-block;
 }
 
 .visual-hierarchy-export-dropdown__menu {
@@ -937,11 +936,6 @@
 
   .visual-hierarchy-header h1 {
     font-size: 1.25rem;
-  }
-
-  .visual-hierarchy-export-dropdown {
-    top: 10px;
-    right: 16px;
   }
 
   .visual-hierarchy-btn--export {
