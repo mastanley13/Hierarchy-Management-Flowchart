@@ -1,4 +1,4 @@
-﻿import React, {
+import React, {
   useCallback,
   useEffect,
   useMemo,
@@ -7,20 +7,24 @@
 } from 'react';
 import {
   ArrowLeft,
+  ChevronDown,
   Download,
   Focus,
-  Maximize2,
-  Minimize2,
+  FoldVertical,
+  Moon,
   RefreshCw,
+  Scan,
   Search,
   Sparkles,
+  Sun,
   Target,
+  UnfoldVertical,
   Users,
 } from 'lucide-react';
 import { toPng, toSvg } from 'html-to-image';
 import type { ReactFlowInstance } from 'reactflow';
 import type { GHLHierarchyNode, GHLSnapshot } from '../lib/types';
-import HierarchyCanvas from '../components/hierarchy/HierarchyCanvas';
+import HierarchyCanvas, { CANVAS_FIT_VIEW_PADDING, CANVAS_MIN_ZOOM } from '../components/hierarchy/HierarchyCanvas';
 import {
   useHierarchyStore,
   useDensity,
@@ -29,9 +33,9 @@ import {
   useHighlightedPath,
   useTheme,
   useSelectedNodeId,
+  useScopeRootId,
 } from '../components/hierarchy/useHierarchyStore';
 import type {
-  Density,
   HierarchyGraph,
   PersonNode,
   PersonStatus,
@@ -40,8 +44,9 @@ import '../App.css';
 import './VisualHierarchyPage.css';
 
 const EXPANSION_STORAGE_KEY = 'visual-hierarchy-expanded-ids';
-const AUTO_EXPAND_CHILDREN_THRESHOLD = 6;
-const AUTO_EXPAND_MAX_DEPTH = 2;
+const SCOPE_STORAGE_KEY = 'visual-hierarchy-scope-root';
+const DEFAULT_SCOPE_DEPTH_PAD = 5;
+const CHILDREN_PAGE_SIZE = 8;
 
 const statusMap: Record<GHLHierarchyNode['status'], PersonStatus> = {
   ACTIVE: 'active',
@@ -84,7 +89,6 @@ const fetchSnapshotData = async (): Promise<GHLSnapshot> => {
 
 const VisualHierarchyPage: React.FC = () => {
   const density = useDensity();
-  const setDensity = useHierarchyStore((state) => state.setDensity);
   const expandedIds = useExpandedIds();
   const setExpandedIds = useHierarchyStore((state) => state.setExpandedIds);
   const toggleExpandedId = useHierarchyStore((state) => state.toggleExpandedId);
@@ -92,11 +96,15 @@ const VisualHierarchyPage: React.FC = () => {
   const setSelectedNodeId = useHierarchyStore((state) => state.setSelectedNodeId);
   const focusLens = useFocusLens();
   const toggleFocusLens = useHierarchyStore((state) => state.toggleFocusLens);
+  const setFocusLensValue = useHierarchyStore((state) => state.setFocusLens);
   const highlightedPath = useHighlightedPath();
   const setHighlightedPath = useHierarchyStore((state) => state.setHighlightedPath);
   const theme = useTheme();
   const setTheme = useHierarchyStore((state) => state.setTheme);
   const toggleTheme = useHierarchyStore((state) => state.toggleTheme);
+  const scopeRootId = useScopeRootId();
+  const setScopeRootId = useHierarchyStore((state) => state.setScopeRootId);
+  const clearScopeRootId = useHierarchyStore((state) => state.clearScopeRootId);
 
   const [snapshot, setSnapshot] = useState<GHLSnapshot | null>(null);
   const [graph, setGraph] = useState<HierarchyGraph | null>(null);
@@ -108,8 +116,15 @@ const VisualHierarchyPage: React.FC = () => {
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const hydratedExpansionRef = useRef(false);
   const highlightTimeoutRef = useRef<number | null>(null);
+  const scopeHydratedRef = useRef(false);
+  const autoFocusLensRef = useRef(false);
+  const depthLimitAutoRef = useRef(false);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
   const [depthLimit, setDepthLimit] = useState<number | null>(null);
+  const [childPageIndex, setChildPageIndex] = useState(0);
+  const [showAllChildren, setShowAllChildren] = useState(false);
+  const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
+  const exportDropdownRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     try {
@@ -154,12 +169,17 @@ const VisualHierarchyPage: React.FC = () => {
     setGraph(builtGraph);
     setParentMap(builtParentMap);
     hydratedExpansionRef.current = false;
+    scopeHydratedRef.current = false;
   }, [snapshot]);
 
-  const defaultExpandedIds = useMemo(
-    () => (graph ? computeDefaultExpandedIds(graph) : []),
-    [graph],
-  );
+  useEffect(() => {
+    if (!graph || !scopeRootId) {
+      return;
+    }
+    if (!graph.nodesById.has(scopeRootId)) {
+      clearScopeRootId();
+    }
+  }, [graph, scopeRootId, clearScopeRootId]);
 
   useEffect(() => {
     if (!graph || hydratedExpansionRef.current) {
@@ -179,8 +199,8 @@ const VisualHierarchyPage: React.FC = () => {
         // ignore parse errors
       }
     }
-    setExpandedIds(defaultExpandedIds.length ? defaultExpandedIds : graph.rootIds);
-  }, [graph, setExpandedIds, defaultExpandedIds]);
+    setExpandedIds(graph.rootIds);
+  }, [graph, setExpandedIds]);
 
   useEffect(() => {
     if (expandedIds.size === 0) {
@@ -188,19 +208,6 @@ const VisualHierarchyPage: React.FC = () => {
     }
     window.localStorage.setItem(EXPANSION_STORAGE_KEY, JSON.stringify(Array.from(expandedIds)));
   }, [expandedIds]);
-
-  useEffect(() => {
-    const handler = (event: KeyboardEvent) => {
-      if (event.code === 'Space' && (event.target instanceof HTMLElement ? event.target.tagName === 'BODY' : true)) {
-        event.preventDefault();
-        toggleFocusLens();
-      }
-    };
-    window.addEventListener('keydown', handler);
-    return () => {
-      window.removeEventListener('keydown', handler);
-    };
-  }, [toggleFocusLens]);
 
   useEffect(() => {
     if (!selectedNodeId) {
@@ -250,6 +257,29 @@ const VisualHierarchyPage: React.FC = () => {
     };
   }, [graph]);
 
+  const computedMaxChildPages = useMemo(() => {
+    if (!graph) return 1;
+    let maxPages = 1;
+    graph.nodesById.forEach((node) => {
+      if (!expandedIds.has(node.id)) return;
+      if (node.childrenIds.length > CHILDREN_PAGE_SIZE) {
+        const pages = Math.ceil(node.childrenIds.length / CHILDREN_PAGE_SIZE);
+        if (pages > maxPages) {
+          maxPages = pages;
+        }
+      }
+    });
+    return maxPages;
+  }, [graph, expandedIds]);
+  const maxChildPages = showAllChildren ? 1 : computedMaxChildPages;
+
+  useEffect(() => {
+    if (showAllChildren) return;
+    if (childPageIndex > maxChildPages - 1) {
+      setChildPageIndex(Math.max(0, maxChildPages - 1));
+    }
+  }, [childPageIndex, maxChildPages, showAllChildren]);
+
   const searchResults = useMemo(() => {
     if (!graph) return [];
     const term = searchValue.trim().toLowerCase();
@@ -267,6 +297,11 @@ const VisualHierarchyPage: React.FC = () => {
     if (!graph || !selectedNodeId) return null;
     return graph.nodesById.get(selectedNodeId) ?? null;
   }, [graph, selectedNodeId]);
+
+  const scopedRootNode: PersonNode | null = useMemo(() => {
+    if (!graph || !scopeRootId) return null;
+    return graph.nodesById.get(scopeRootId) ?? null;
+  }, [graph, scopeRootId]);
 
   const selectedNodeInfo = useMemo(() => {
     if (!selectedNode) return null;
@@ -363,6 +398,33 @@ const VisualHierarchyPage: React.FC = () => {
     };
   }, [selectedNode]);
 
+  const selectedPagination = useMemo(() => {
+    if (!selectedNode) return null;
+    const childCount = selectedNode.childrenIds.length;
+    if (childCount === 0) return null;
+    if (showAllChildren) {
+      return {
+        nodeName: selectedNode.name,
+        totalChildren: childCount,
+        showAll: true,
+      };
+    }
+    if (childCount <= CHILDREN_PAGE_SIZE) return null;
+    const totalPages = Math.ceil(childCount / CHILDREN_PAGE_SIZE);
+    const pageIndex = Math.min(childPageIndex, Math.max(totalPages - 1, 0));
+    const start = pageIndex * CHILDREN_PAGE_SIZE + 1;
+    const end = Math.min(childCount, (pageIndex + 1) * CHILDREN_PAGE_SIZE);
+    return {
+      nodeName: selectedNode.name,
+      pageIndex,
+      totalPages,
+      start,
+      end,
+      totalChildren: childCount,
+      showAll: false,
+    };
+  }, [selectedNode, childPageIndex, showAllChildren]);
+
   const handleToggleNode = useCallback(
     (id: string) => {
       toggleExpandedId(id);
@@ -405,7 +467,7 @@ const VisualHierarchyPage: React.FC = () => {
           targetNode.position.y + (targetNode.height ?? 0) / 2,
           {
             duration: 500,
-            zoom: Math.max(viewport.zoom, 0.95),
+            zoom: viewport.zoom,
           },
         );
       });
@@ -424,6 +486,90 @@ const VisualHierarchyPage: React.FC = () => {
     },
     [focusNode, setSelectedNodeId, setHighlightedPath],
   );
+
+  const handleFocusBranch = useCallback(
+    (nodeId: string) => {
+      if (!graph) return;
+      const node = graph.nodesById.get(nodeId);
+      if (!node) return;
+      setScopeRootId(nodeId);
+      focusNode(nodeId);
+      if (!focusLens) {
+        setFocusLensValue(true);
+        autoFocusLensRef.current = true;
+      } else {
+        autoFocusLensRef.current = false;
+      }
+      if (depthLimit === null) {
+        setDepthLimit(DEFAULT_SCOPE_DEPTH_PAD);
+        depthLimitAutoRef.current = true;
+      } else {
+        depthLimitAutoRef.current = false;
+      }
+    },
+    [graph, focusNode, setScopeRootId, focusLens, setFocusLensValue, depthLimit],
+  );
+
+  const handleClearScope = useCallback(() => {
+    if (!scopeRootId) return;
+    clearScopeRootId();
+    if (autoFocusLensRef.current) {
+      setFocusLensValue(false);
+    }
+    autoFocusLensRef.current = false;
+    if (depthLimitAutoRef.current) {
+      setDepthLimit(null);
+    }
+    depthLimitAutoRef.current = false;
+  }, [scopeRootId, clearScopeRootId, setFocusLensValue, setDepthLimit]);
+
+  const handleGlobalPagination = useCallback(
+    (direction: 'next' | 'prev') => {
+      if (showAllChildren) return;
+      setChildPageIndex((prev) => {
+        if (direction === 'next') {
+          return Math.min(prev + 1, Math.max(0, maxChildPages - 1));
+        }
+        return Math.max(prev - 1, 0);
+      });
+    },
+    [maxChildPages, showAllChildren],
+  );
+
+  const handleToggleShowAll = useCallback(() => {
+    setShowAllChildren((prev) => !prev);
+  }, []);
+
+  useEffect(() => {
+    if (!graph || scopeHydratedRef.current) {
+      return;
+    }
+    scopeHydratedRef.current = true;
+    try {
+      const storedScope = window.localStorage.getItem(SCOPE_STORAGE_KEY);
+      if (storedScope && graph.nodesById.has(storedScope)) {
+        setScopeRootId(storedScope);
+        focusNode(storedScope);
+      }
+    } catch {
+      // ignore hydration errors
+    }
+  }, [graph, focusNode, setScopeRootId]);
+
+  useEffect(() => {
+    if (!scopeHydratedRef.current) {
+      return;
+    }
+    try {
+      if (scopeRootId) {
+        window.localStorage.setItem(SCOPE_STORAGE_KEY, scopeRootId);
+      } else {
+        window.localStorage.removeItem(SCOPE_STORAGE_KEY);
+      }
+    } catch {
+      // ignore persistence errors
+    }
+  }, [scopeRootId]);
 
   const handleSearchSubmit = useCallback(
     (event: React.FormEvent<HTMLFormElement>) => {
@@ -486,15 +632,53 @@ const VisualHierarchyPage: React.FC = () => {
 
   const handleFocusRoot = useCallback(() => {
     if (!graph || !reactFlowInstance) return;
-    reactFlowInstance.fitView({ padding: 0.4, duration: 500 });
+    reactFlowInstance.fitView({
+      padding: CANVAS_FIT_VIEW_PADDING,
+      duration: 500,
+      minZoom: CANVAS_MIN_ZOOM,
+      includeHiddenNodes: true,
+    });
   }, [graph, reactFlowInstance]);
 
-  const toggleDensity = useCallback(() => {
-    const order: Density[] = ['comfortable', 'cozy', 'compact'];
-    const currentIdx = order.indexOf(density);
-    const next = order[(currentIdx + 1) % order.length];
-    setDensity(next);
-  }, [density, setDensity]);
+  const handleToggleFocusLens = useCallback(() => {
+    autoFocusLensRef.current = false;
+    toggleFocusLens();
+  }, [toggleFocusLens]);
+
+  useEffect(() => {
+    if (!reactFlowInstance) return undefined;
+    const fitTimeout = window.setTimeout(() => {
+      handleFocusRoot();
+    }, 150);
+    return () => window.clearTimeout(fitTimeout);
+  }, [childPageIndex, showAllChildren, handleFocusRoot, reactFlowInstance]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      if (event.code === 'Space' && (event.target instanceof HTMLElement ? event.target.tagName === 'BODY' : true)) {
+        event.preventDefault();
+        handleToggleFocusLens();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+    };
+  }, [handleToggleFocusLens]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (exportDropdownRef.current && !exportDropdownRef.current.contains(event.target as Node)) {
+        setExportDropdownOpen(false);
+      }
+    };
+    if (exportDropdownOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [exportDropdownOpen]);
 
   if (loading && !snapshot) {
     return (
@@ -530,43 +714,63 @@ const VisualHierarchyPage: React.FC = () => {
     <div className="visual-hierarchy-page" data-theme={theme}>
       <header className="visual-hierarchy-header">
         <div className="visual-hierarchy-header__content">
-          <div>
-            <button
-              type="button"
-              className="visual-hierarchy-back"
-              aria-label="Back to hierarchy hub"
-              onClick={() => window.location.assign('/')}
-            >
-              <ArrowLeft size={16} />
-              Back
-            </button>
-            <h1>Visual Upline Hierarchy</h1>
-          </div>
-          <div className="visual-hierarchy-header__actions">
+          <button
+            type="button"
+            className="visual-hierarchy-back"
+            aria-label="Back to hierarchy hub"
+            onClick={() => window.location.assign('/')}
+          >
+            <ArrowLeft size={16} />
+            Back
+          </button>
+          <h1>Visual Upline Hierarchy</h1>
+          <div className="visual-hierarchy-export-dropdown" ref={exportDropdownRef}>
             <button
               type="button"
               className="visual-hierarchy-btn visual-hierarchy-btn--primary"
-              onClick={() => handleExport('viewport-svg')}
+              onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
             >
               <Download size={16} />
-              Export SVG
+              Export
+              <ChevronDown size={14} />
             </button>
-            <button
-              type="button"
-              className="visual-hierarchy-btn"
-              onClick={() => handleExport('viewport-png')}
-            >
-              <Download size={16} />
-              Export PNG
-            </button>
-            <button
-              type="button"
-              className="visual-hierarchy-btn visual-hierarchy-btn--ghost"
-              onClick={() => handleExport('full-svg')}
-            >
-              <Download size={16} />
-              Export Full Tree
-            </button>
+            {exportDropdownOpen && (
+              <div className="visual-hierarchy-export-dropdown__menu">
+                <button
+                  type="button"
+                  className="visual-hierarchy-export-dropdown__item"
+                  onClick={() => {
+                    handleExport('viewport-svg');
+                    setExportDropdownOpen(false);
+                  }}
+                >
+                  <Download size={16} />
+                  Export SVG
+                </button>
+                <button
+                  type="button"
+                  className="visual-hierarchy-export-dropdown__item"
+                  onClick={() => {
+                    handleExport('viewport-png');
+                    setExportDropdownOpen(false);
+                  }}
+                >
+                  <Download size={16} />
+                  Export PNG
+                </button>
+                <button
+                  type="button"
+                  className="visual-hierarchy-export-dropdown__item"
+                  onClick={() => {
+                    handleExport('full-svg');
+                    setExportDropdownOpen(false);
+                  }}
+                >
+                  <Download size={16} />
+                  Export Full Tree
+                </button>
+              </div>
+            )}
           </div>
         </div>
         <div className="visual-hierarchy-stats">
@@ -633,42 +837,34 @@ const VisualHierarchyPage: React.FC = () => {
           </form>
 
           <div className="visual-hierarchy-toolbar__actions">
+            {/* Display Controls */}
             <button
               type="button"
-              className="visual-hierarchy-chip"
+              className="visual-hierarchy-chip visual-hierarchy-chip--icon-only"
               onClick={toggleTheme}
               title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
             >
-              {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
             </button>
+
+            {/* View Controls */}
             <button
               type="button"
               className="visual-hierarchy-chip"
-              onClick={toggleDensity}
+              onClick={handleFocusRoot}
+              title="Fit view to content"
             >
-              Density · {density}
-            </button>
-            <button
-              type="button"
-              className={`visual-hierarchy-chip ${focusLens ? 'is-active' : ''}`}
-              onClick={toggleFocusLens}
-              title="Dim unrelated branches (Space)"
-            >
-              <Focus size={14} />
-              Focus
-            </button>
-            <button type="button" className="visual-hierarchy-chip" onClick={handleFocusRoot}>
-              <Maximize2 size={14} />
-              Fit view
+              <Scan size={14} />
+              Fit
             </button>
             <button
               type="button"
               className="visual-hierarchy-chip"
               onClick={() => (graph ? setExpandedIds(graph.rootIds) : undefined)}
-              title="Collapse to roots"
+              title="Collapse all nodes to roots"
             >
-              <Minimize2 size={14} />
-              Collapse all
+              <FoldVertical size={14} />
+              Collapse
             </button>
             <button
               type="button"
@@ -676,9 +872,53 @@ const VisualHierarchyPage: React.FC = () => {
               onClick={() => (graph ? setExpandedIds(Array.from(graph.nodesById.keys())) : undefined)}
               title="Expand all nodes"
             >
-              <Maximize2 size={14} />
-              Expand all
+              <UnfoldVertical size={14} />
+              Expand
             </button>
+
+            {/* Focus Controls */}
+            <button
+              type="button"
+              className={`visual-hierarchy-chip ${focusLens ? 'is-active' : ''}`}
+              onClick={handleToggleFocusLens}
+              title="Dim unrelated branches (Space)"
+            >
+              <Focus size={14} />
+              Focus
+            </button>
+            {scopeRootId ? (
+              <button
+                type="button"
+                className="visual-hierarchy-chip visual-hierarchy-chip--scope"
+                onClick={handleClearScope}
+                title="Return to full organization"
+              >
+                <ArrowLeft size={14} />
+                Exit focus
+              </button>
+            ) : null}
+
+            {/* Data Controls */}
+            {graph ? (
+              <div className="visual-hierarchy-depth">
+                <label htmlFor="depthRange">{scopeRootId ? 'Depth (from focus)' : 'Depth'}</label>
+                <input
+                  id="depthRange"
+                  type="range"
+                  min={1}
+                  max={Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1))}
+                  value={depthLimit ?? Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1))}
+                  onChange={(e) => {
+                    const v = Number(e.target.value);
+                    const max = Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1));
+                    depthLimitAutoRef.current = false;
+                    setDepthLimit(v >= max ? null : v);
+                  }}
+                  title="Limit visible levels"
+                />
+                <span className="visual-hierarchy-depth__value">{depthLimit ?? 'All'}</span>
+              </div>
+            ) : null}
             <button
               type="button"
               className="visual-hierarchy-chip"
@@ -689,25 +929,51 @@ const VisualHierarchyPage: React.FC = () => {
               <RefreshCw size={14} className={loading ? 'spinning' : ''} />
               Refresh
             </button>
-            {graph ? (
-              <div className="visual-hierarchy-depth">
-                <label htmlFor="depthRange">Depth</label>
-                <input
-                  id="depthRange"
-                  type="range"
-                  min={1}
-                  max={Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1))}
-                  value={depthLimit ?? Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1))}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    const max = Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1));
-                    setDepthLimit(v >= max ? null : v);
-                  }}
-                  title="Limit visible levels"
-                />
-                <span className="visual-hierarchy-depth__value">{depthLimit ?? 'All'}</span>
+            <div className="visual-hierarchy-toolbar__pager">
+              <div className="visual-hierarchy-toolbar__pager-meta">
+                {selectedPagination ? (
+                  selectedPagination.showAll ? (
+                    <span className="visual-hierarchy-toolbar__pager-range">
+                      Showing all {selectedPagination.totalChildren} children
+                    </span>
+                  ) : (
+                    <span className="visual-hierarchy-toolbar__pager-range">
+                      {selectedPagination.start}-{selectedPagination.end} of {selectedPagination.totalChildren}
+                    </span>
+                  )
+                ) : (
+                  <span className="visual-hierarchy-toolbar__pager-range">
+                    {showAllChildren
+                      ? 'Showing all nodes'
+                      : `Page ${Math.min(childPageIndex + 1, maxChildPages)} / ${maxChildPages}`}
+                  </span>
+                )}
               </div>
-            ) : null}
+              <div className="visual-hierarchy-toolbar__pager-controls">
+                <button
+                  type="button"
+                  onClick={() => handleGlobalPagination('prev')}
+                  disabled={showAllChildren || childPageIndex === 0}
+                >
+                  Prev
+                </button>
+                <button
+                  type="button"
+                  className={showAllChildren ? 'is-active' : undefined}
+                  onClick={handleToggleShowAll}
+                  aria-pressed={showAllChildren}
+                >
+                  {showAllChildren ? 'Paged view' : 'Show all'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleGlobalPagination('next')}
+                  disabled={showAllChildren || childPageIndex >= maxChildPages - 1}
+                >
+                  Next
+                </button>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -732,6 +998,15 @@ const VisualHierarchyPage: React.FC = () => {
             })}
           </nav>
         ) : null}
+        {scopedRootNode ? (
+          <div className="visual-hierarchy-scope-callout">
+            <Target size={14} />
+            <div>
+              <span className="visual-hierarchy-scope-callout__label">Focused branch</span>
+              <p>{scopedRootNode.name}</p>
+            </div>
+          </div>
+        ) : null}
 
         <section className="visual-hierarchy-workspace">
           <div className="visual-hierarchy-canvas" ref={canvasRef}>
@@ -747,8 +1022,12 @@ const VisualHierarchyPage: React.FC = () => {
               onHoverNode={setHoveredNodeId}
               hoveredNodeId={hoveredNodeId}
               depthLimit={depthLimit}
+              scopeRootId={scopeRootId}
               theme={theme as 'dark' | 'light'}
               onInit={setReactFlowInstance}
+              childPageIndex={childPageIndex}
+              childrenPageSize={CHILDREN_PAGE_SIZE}
+              showAllChildren={showAllChildren}
             />
           </div>
           <aside className={`visual-hierarchy-inspector ${selectedNode ? 'is-open' : ''}`}>
@@ -780,6 +1059,19 @@ const VisualHierarchyPage: React.FC = () => {
                     </div>
                   </div>
                 </header>
+                <div className="visual-hierarchy-inspector__actions">
+                  {scopeRootId === selectedNode.id ? (
+                    <button type="button" onClick={handleClearScope}>
+                      <ArrowLeft size={14} />
+                      Exit focus
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => handleFocusBranch(selectedNode.id)}>
+                      <Target size={14} />
+                      Focus this branch
+                    </button>
+                  )}
+                </div>
                 {selectedNodeInfo?.branchChips.length ? (
                   <div className="visual-hierarchy-inspector__branch">
                     {selectedNodeInfo.branchChips.map((chip) => (
@@ -912,20 +1204,6 @@ const buildHierarchyGraph = (
   };
 };
 
-const computeDefaultExpandedIds = (graph: HierarchyGraph) => {
-  const expanded = new Set(graph.rootIds);
-  graph.nodesById.forEach((node) => {
-    if (
-      node.childrenIds.length >= AUTO_EXPAND_CHILDREN_THRESHOLD &&
-      node.depth > 0 &&
-      node.depth <= AUTO_EXPAND_MAX_DEPTH
-    ) {
-      expanded.add(node.id);
-    }
-  });
-  return Array.from(expanded);
-};
-
 const downloadDataUrl = (dataUrl: string, filename: string) => {
   const link = document.createElement('a');
   link.href = dataUrl;
@@ -942,6 +1220,3 @@ const downloadText = (svgData: string, filename: string) => {
   link.click();
   URL.revokeObjectURL(url);
 };
-
-
-

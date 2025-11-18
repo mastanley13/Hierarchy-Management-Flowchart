@@ -17,6 +17,9 @@ type HierarchyState = {
   toggleFocusLens: () => void;
   highlightedPath: string[];
   setHighlightedPath: (ids: string[]) => void;
+  scopeRootId: string | null;
+  setScopeRootId: (id: string | null) => void;
+  clearScopeRootId: () => void;
 };
 
 export const useHierarchyStore = create<HierarchyState>((set) => ({
@@ -44,6 +47,9 @@ export const useHierarchyStore = create<HierarchyState>((set) => ({
   toggleFocusLens: () => set((state) => ({ focusLens: !state.focusLens })),
   highlightedPath: [],
   setHighlightedPath: (highlightedPath) => set({ highlightedPath }),
+  scopeRootId: null,
+  setScopeRootId: (scopeRootId) => set({ scopeRootId }),
+  clearScopeRootId: () => set({ scopeRootId: null }),
 }));
 
 export const useDensity = () => useHierarchyStore((state) => state.density);
@@ -52,3 +58,4 @@ export const useSelectedNodeId = () => useHierarchyStore((state) => state.select
 export const useExpandedIds = () => useHierarchyStore((state) => state.expandedIds);
 export const useFocusLens = () => useHierarchyStore((state) => state.focusLens);
 export const useHighlightedPath = () => useHierarchyStore((state) => state.highlightedPath);
+export const useScopeRootId = () => useHierarchyStore((state) => state.scopeRootId);

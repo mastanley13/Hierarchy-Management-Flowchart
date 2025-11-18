@@ -131,7 +131,7 @@ const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
   return (
     <article
       className={[
-        'node-card',
+        'node-card nodrag',
         isSelected ? 'is-selected' : '',
         isDimmed ? 'is-dimmed' : '',
       ]
@@ -145,6 +145,7 @@ const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
       onKeyDown={handleKeyDown}
       onMouseEnter={handleMouseEnter}
       onMouseLeave={handleMouseLeave}
+      onMouseDown={(event) => event.stopPropagation()}
       style={nodeStyle}
     >
       <Handle
@@ -161,9 +162,10 @@ const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
       />
       <button
         type="button"
-        className="node-card__toggle"
+        className="node-card__toggle nodrag"
         aria-label={expanded ? 'Collapse branch' : 'Expand branch'}
         onClick={handleToggle}
+        onMouseDown={(event) => event.stopPropagation()}
       >
         {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
       </button>
@@ -188,7 +190,13 @@ const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
           {person.metrics.lastSeen ? `Last touch ${person.metrics.lastSeen}` : ''}
         </div>
       </div>
-      <button type="button" className="node-card__actions" aria-label="Open actions menu" onClick={handleActionsClick}>
+      <button
+        type="button"
+        className="node-card__actions nodrag"
+        aria-label="Open actions menu"
+        onClick={handleActionsClick}
+        onMouseDown={(event) => event.stopPropagation()}
+      >
         <MoreHorizontal size={16} />
       </button>
     </article>

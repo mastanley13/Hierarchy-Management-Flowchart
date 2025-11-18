@@ -15,6 +15,10 @@
   border-image-slice: 1;
 }
 
+.node-card.nodrag {
+  cursor: default;
+}
+
 /* Light theme refinements */
 .visual-hierarchy-page[data-theme='light'] .node-card {
   box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);

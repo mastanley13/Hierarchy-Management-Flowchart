@@ -15,6 +15,10 @@ import type { Density, HierarchyGraph } from './types';
 import './tokens.css';
 import './hierarchyCanvas.css';
 
+export const CANVAS_MIN_ZOOM = 0.08;
+export const CANVAS_FIT_VIEW_PADDING = 0.25;
+const CANVAS_MAX_ZOOM = 1.8;
+
 type HierarchyCanvasProps = {
   graph: HierarchyGraph;
   expandedIds: Set<string>;
@@ -25,10 +29,14 @@ type HierarchyCanvasProps = {
   onToggleNode: (id: string) => void;
   onSelectNode: (id: string | null) => void;
   depthLimit?: number | null;
+  scopeRootId?: string | null;
   hoveredNodeId?: string | null;
   onHoverNode?: (id: string | null) => void;
   theme?: 'dark' | 'light';
   onInit?: (instance: ReactFlowInstance) => void;
+  childPageIndex: number;
+  childrenPageSize: number;
+  showAllChildren: boolean;
 };
 
 const nodeTypes = {
@@ -49,10 +57,14 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
   onToggleNode,
   onSelectNode,
   depthLimit = null,
+  scopeRootId = null,
   hoveredNodeId = null,
   onHoverNode,
   theme = 'dark',
   onInit,
+  childPageIndex,
+  childrenPageSize,
+  showAllChildren,
 }, ref) => {
   const layout = useElkLayout({ density });
   const highlightSet = useMemo(() => new Set(highlightedPath), [highlightedPath]);
@@ -76,6 +88,7 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
 
   const visibleTraversal = useMemo(() => {
     const items: { id: string; depth: number }[] = [];
+    const startRootIds = scopeRootId && graph.nodesById.has(scopeRootId) ? [scopeRootId] : graph.rootIds;
     const visit = (ids: string[], depth: number) => {
       ids.forEach((id) => {
         const node = graph.nodesById.get(id);
@@ -83,13 +96,20 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
         items.push({ id, depth });
         const canGoDeeper = depthLimit === null || depth < depthLimit;
         if (node.childrenIds.length > 0 && expandedIds.has(id) && canGoDeeper) {
-          visit(node.childrenIds, depth + 1);
+          const shouldPaginate = !showAllChildren && node.childrenIds.length > childrenPageSize;
+          const totalPages = shouldPaginate ? Math.ceil(node.childrenIds.length / childrenPageSize) : 1;
+          const windowIndex = shouldPaginate ? Math.min(childPageIndex, Math.max(totalPages - 1, 0)) : 0;
+          const startIndex = shouldPaginate ? windowIndex * childrenPageSize : 0;
+          const visibleChildren = shouldPaginate
+            ? node.childrenIds.slice(startIndex, startIndex + childrenPageSize)
+            : node.childrenIds;
+          visit(visibleChildren, depth + 1);
         }
       });
     };
-    visit(graph.rootIds, 0);
+    visit(startRootIds, 0);
     return items;
-  }, [graph.rootIds, graph.nodesById, expandedIds, depthLimit]);
+  }, [graph.rootIds, graph.nodesById, expandedIds, depthLimit, scopeRootId, childPageIndex, childrenPageSize, showAllChildren]);
 
   const baseNodes = useMemo<Node[]>(
     () =>
@@ -119,19 +139,33 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
           draggable: false,
         };
       }),
-    [visibleTraversal, graph.nodesById, focusLens, effectiveHighlightSet, density, expandedIds, selectedNodeId, onToggleNode, onSelectNode, onHoverNode, hoveredNodeId, hoverSet],
+    [
+      visibleTraversal,
+      graph.nodesById,
+      focusLens,
+      effectiveHighlightSet,
+      density,
+      expandedIds,
+      selectedNodeId,
+      onToggleNode,
+      onSelectNode,
+      onHoverNode,
+      hoveredNodeId,
+      hoverSet,
+      childrenPageSize,
+    ],
   );
 
   const baseEdges = useMemo<Edge[]>(
     () => {
       const edges: Edge[] = [];
+      const visibleIds = new Set(visibleTraversal.map((item) => item.id));
       visibleTraversal.forEach(({ id }) => {
         const node = graph.nodesById.get(id);
         if (!node) return;
         if (!expandedIds.has(id)) return;
         node.childrenIds.forEach((childId) => {
-          const childVisible = visibleTraversal.some((item) => item.id === childId);
-          if (!childVisible) return;
+          if (!visibleIds.has(childId)) return;
           const highlighted = effectiveHighlightSet.has(id) && effectiveHighlightSet.has(childId);
           edges.push({
             id: `${id}-${childId}`,
@@ -179,16 +213,16 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
         nodesDraggable={false}
         panOnScroll
         panOnDrag
-        selectionOnDrag
+        selectionOnDrag={false}
         fitView
-        fitViewOptions={{ padding: 0.2, includeHiddenNodes: true }}
+        fitViewOptions={{ padding: CANVAS_FIT_VIEW_PADDING, includeHiddenNodes: true, minZoom: CANVAS_MIN_ZOOM }}
         zoomOnScroll
         nodesFocusable
         deleteKeyCode={[]}
         onInit={onInit}
         onPaneClick={() => onSelectNode(null)}
-        minZoom={0.4}
-        maxZoom={1.8}
+        minZoom={CANVAS_MIN_ZOOM}
+        maxZoom={CANVAS_MAX_ZOOM}
       >
         <Background gap={24} color={theme === 'light' ? '#e5e7eb' : '#1f2532'} />
         <Controls />
