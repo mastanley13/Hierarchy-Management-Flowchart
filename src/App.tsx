@@ -64,6 +64,7 @@ function App() {
           <div className="header-left">
             <h1>Hierarchy Management System</h1>
             <span className="firm-name">Major Revolution Financial Group</span>
+            <span className="firm-name">SureLC Demo</span>
           </div>
           <div className="header-controls">
             <button

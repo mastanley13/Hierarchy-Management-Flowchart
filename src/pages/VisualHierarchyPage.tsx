@@ -47,6 +47,7 @@ const EXPANSION_STORAGE_KEY = 'visual-hierarchy-expanded-ids';
 const SCOPE_STORAGE_KEY = 'visual-hierarchy-scope-root';
 const DEFAULT_SCOPE_DEPTH_PAD = 5;
 const CHILDREN_PAGE_SIZE = 8;
+const SURELC_DEMO_LINK_ENABLED = false;
 
 const statusMap: Record<GHLHierarchyNode['status'], PersonStatus> = {
   ACTIVE: 'active',
@@ -351,7 +352,9 @@ const VisualHierarchyPage: React.FC = () => {
     const vendorLabel = vendorTags.length ? vendorTags.join(' / ') : undefined;
     const lastSeen = formatDate(selectedNode.metrics.lastSeen);
     const descendantCount = selectedNode.metrics.descendantCount ?? 0;
-    const sourceLabel = (selectedNode.uplineSource ?? 'unknown').toUpperCase();
+    const rawSource = selectedNode.uplineSource ?? 'unknown';
+    const sourceLabel =
+      rawSource === 'fallback' ? 'DEFAULT' : rawSource.toUpperCase();
 
     const stats: Array<{ label: string; value: string; tone?: 'accent' }> = [
       {
@@ -712,22 +715,25 @@ const VisualHierarchyPage: React.FC = () => {
 
   return (
     <div className="visual-hierarchy-page" data-theme={theme}>
-      <header className="visual-hierarchy-header">
-        <div className="visual-hierarchy-header__content">
-          <button
-            type="button"
-            className="visual-hierarchy-back"
-            aria-label="Back to hierarchy hub"
-            onClick={() => window.location.assign('/')}
-          >
-            <ArrowLeft size={16} />
-            Back
-          </button>
-          <h1>Visual Upline Hierarchy</h1>
+        <header className="visual-hierarchy-header">
+          <div className="visual-hierarchy-header__content">
+            {SURELC_DEMO_LINK_ENABLED && (
+              <button
+                type="button"
+                className="visual-hierarchy-back"
+                aria-label="Open SureLC Demo"
+                onClick={() => window.location.assign('/surelc-demo')}
+              >
+                <ArrowLeft size={16} />
+                SureLC Demo
+              </button>
+            )}
+            <h1>Visual Upline Hierarchy</h1>
+          </div>
           <div className="visual-hierarchy-export-dropdown" ref={exportDropdownRef}>
             <button
               type="button"
-              className="visual-hierarchy-btn visual-hierarchy-btn--primary"
+              className="visual-hierarchy-btn visual-hierarchy-btn--export"
               onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
             >
               <Download size={16} />
@@ -772,7 +778,6 @@ const VisualHierarchyPage: React.FC = () => {
               </div>
             )}
           </div>
-        </div>
         <div className="visual-hierarchy-stats">
           <div className="visual-hierarchy-stat-card">
             <Users size={18} />
