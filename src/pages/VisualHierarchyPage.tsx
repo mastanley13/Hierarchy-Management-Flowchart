@@ -11,12 +11,9 @@ import {
   Download,
   Focus,
   FoldVertical,
-  Moon,
-  RefreshCw,
   Scan,
   Search,
   Sparkles,
-  Sun,
   Target,
   UnfoldVertical,
   Users,
@@ -102,7 +99,6 @@ const VisualHierarchyPage: React.FC = () => {
   const setHighlightedPath = useHierarchyStore((state) => state.setHighlightedPath);
   const theme = useTheme();
   const setTheme = useHierarchyStore((state) => state.setTheme);
-  const toggleTheme = useHierarchyStore((state) => state.toggleTheme);
   const scopeRootId = useScopeRootId();
   const setScopeRootId = useHierarchyStore((state) => state.setScopeRootId);
   const clearScopeRootId = useHierarchyStore((state) => state.clearScopeRootId);
@@ -842,98 +838,59 @@ const VisualHierarchyPage: React.FC = () => {
           </form>
 
           <div className="visual-hierarchy-toolbar__actions">
-            {/* Display Controls */}
-            <button
-              type="button"
-              className="visual-hierarchy-chip visual-hierarchy-chip--icon-only"
-              onClick={toggleTheme}
-              title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
-            >
-              {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
-            </button>
-
-            {/* View Controls */}
-            <button
-              type="button"
-              className="visual-hierarchy-chip"
-              onClick={handleFocusRoot}
-              title="Fit view to content"
-            >
-              <Scan size={14} />
-              Fit
-            </button>
-            <button
-              type="button"
-              className="visual-hierarchy-chip"
-              onClick={() => (graph ? setExpandedIds(graph.rootIds) : undefined)}
-              title="Collapse all nodes to roots"
-            >
-              <FoldVertical size={14} />
-              Collapse
-            </button>
-            <button
-              type="button"
-              className="visual-hierarchy-chip"
-              onClick={() => (graph ? setExpandedIds(Array.from(graph.nodesById.keys())) : undefined)}
-              title="Expand all nodes"
-            >
-              <UnfoldVertical size={14} />
-              Expand
-            </button>
-
-            {/* Focus Controls */}
-            <button
-              type="button"
-              className={`visual-hierarchy-chip ${focusLens ? 'is-active' : ''}`}
-              onClick={handleToggleFocusLens}
-              title="Dim unrelated branches (Space)"
-            >
-              <Focus size={14} />
-              Focus
-            </button>
-            {scopeRootId ? (
+            <div className="visual-hierarchy-toolbar__chips" aria-label="View controls">
+              {/* View Controls */}
               <button
                 type="button"
-                className="visual-hierarchy-chip visual-hierarchy-chip--scope"
-                onClick={handleClearScope}
-                title="Return to full organization"
+                className="visual-hierarchy-chip"
+                onClick={handleFocusRoot}
+                title="Fit view to content"
               >
-                <ArrowLeft size={14} />
-                Exit focus
+                <Scan size={14} />
+                Fit
               </button>
-            ) : null}
+              <button
+                type="button"
+                className="visual-hierarchy-chip"
+                onClick={() => (graph ? setExpandedIds(graph.rootIds) : undefined)}
+                title="Collapse all nodes to roots"
+              >
+                <FoldVertical size={14} />
+                Collapse
+              </button>
+              <button
+                type="button"
+                className="visual-hierarchy-chip"
+                onClick={() => (graph ? setExpandedIds(Array.from(graph.nodesById.keys())) : undefined)}
+                title="Expand all nodes"
+              >
+                <UnfoldVertical size={14} />
+                Expand
+              </button>
 
-            {/* Data Controls */}
-            {graph ? (
-              <div className="visual-hierarchy-depth">
-                <label htmlFor="depthRange">{scopeRootId ? 'Depth (from focus)' : 'Depth'}</label>
-                <input
-                  id="depthRange"
-                  type="range"
-                  min={1}
-                  max={Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1))}
-                  value={depthLimit ?? Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1))}
-                  onChange={(e) => {
-                    const v = Number(e.target.value);
-                    const max = Math.max(2, ...Array.from(graph.nodesById.values()).map((n) => n.depth + 1));
-                    depthLimitAutoRef.current = false;
-                    setDepthLimit(v >= max ? null : v);
-                  }}
-                  title="Limit visible levels"
-                />
-                <span className="visual-hierarchy-depth__value">{depthLimit ?? 'All'}</span>
-              </div>
-            ) : null}
-            <button
-              type="button"
-              className="visual-hierarchy-chip"
-              onClick={handleRefresh}
-              disabled={loading}
-              title="Refresh snapshot"
-            >
-              <RefreshCw size={14} className={loading ? 'spinning' : ''} />
-              Refresh
-            </button>
+              {/* Focus Controls */}
+              <button
+                type="button"
+                className={`visual-hierarchy-chip ${focusLens ? 'is-active' : ''}`}
+                onClick={handleToggleFocusLens}
+                title="Dim unrelated branches (Space)"
+              >
+                <Focus size={14} />
+                Focus
+              </button>
+              {scopeRootId ? (
+                <button
+                  type="button"
+                  className="visual-hierarchy-chip visual-hierarchy-chip--scope"
+                  onClick={handleClearScope}
+                  title="Return to full organization"
+                >
+                  <ArrowLeft size={14} />
+                  Exit focus
+                </button>
+              ) : null}
+            </div>
+
             <div className="visual-hierarchy-toolbar__pager">
               <div className="visual-hierarchy-toolbar__pager-meta">
                 {selectedPagination ? (

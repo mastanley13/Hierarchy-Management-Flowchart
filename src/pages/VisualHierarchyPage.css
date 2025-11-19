@@ -246,10 +246,10 @@
 
 .visual-hierarchy-toolbar {
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: flex-start;
-  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 20px;
+  align-items: center;
+  flex-wrap: nowrap;
 }
 
 .visual-hierarchy-search {
@@ -258,6 +258,7 @@
   align-items: center;
   gap: 10px;
   min-width: 320px;
+  flex: 1 1 320px;
   padding: 10px 12px;
   border-radius: 14px;
   background: rgba(15, 23, 42, 0.7);
@@ -340,10 +341,22 @@
 }
 
 .visual-hierarchy-toolbar__actions {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 16px;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.visual-hierarchy-toolbar__chips {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .visual-hierarchy-toolbar__pager {
@@ -436,35 +449,6 @@
 .visual-hierarchy-segmented__item.is-selected {
   color: var(--accent);
   background: rgba(96, 245, 161, 0.12);
-}
-
-.visual-hierarchy-depth {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: 4px;
-  padding: 5px 8px;
-  border-radius: 12px;
-  border: 1px solid rgba(71, 85, 105, 0.4);
-  background: rgba(15, 23, 42, 0.6);
-}
-
-.visual-hierarchy-depth label {
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-secondary);
-}
-
-.visual-hierarchy-depth input[type='range'] {
-  width: 120px;
-}
-
-.visual-hierarchy-depth__value {
-  font-size: 0.82rem;
-  color: var(--text-primary);
-  min-width: 28px;
-  text-align: right;
 }
 
 .visual-hierarchy-chip {
@@ -923,13 +907,64 @@
   .visual-hierarchy-workspace {
     grid-template-columns: 1fr;
   }
+}
 
-  .visual-hierarchy-inspector {
-    order: -1;
+/* Tablet+mobile toolbar stacking so pagination sits below chips */
+@media (max-width: 1024px) {
+  .visual-hierarchy-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .visual-hierarchy-search {
+    width: 100%;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+
+  .visual-hierarchy-toolbar__actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .visual-hierarchy-toolbar__chips {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    width: 100%;
+  }
+
+  .visual-hierarchy-toolbar__chips .visual-hierarchy-chip {
+    width: 100%;
+    justify-content: center;
+    white-space: nowrap;
+    padding: 6px 8px;
+    font-size: 0.8rem;
+  }
+
+  .visual-hierarchy-toolbar__chips .visual-hierarchy-chip svg {
+    width: 12px;
+    height: 12px;
+  }
+
+  .visual-hierarchy-toolbar__chips .visual-hierarchy-chip--scope {
+    grid-column: 1 / -1;
+  }
+
+  .visual-hierarchy-toolbar__pager {
+    width: 100%;
+    justify-content: space-between;
   }
 }
 
 @media (max-width: 768px) {
+  .visual-hierarchy-page {
+    height: auto;
+    min-height: 100vh;
+    overflow-y: auto;
+  }
+
   .visual-hierarchy-header__content {
     gap: 8px;
   }
@@ -944,19 +979,75 @@
   }
 
   .visual-hierarchy-main {
-    padding-inline: 20px;
+    padding: 12px 20px 20px;
+    flex: none;
+    min-height: auto;
+    overflow: visible;
   }
 
   .visual-hierarchy-toolbar {
     flex-direction: column;
     align-items: stretch;
+    gap: 10px;
   }
 
   .visual-hierarchy-search {
     width: 100%;
+    flex: 0 0 auto;
+    min-width: 0;
+    padding: 8px 10px;
   }
 
   .visual-hierarchy-toolbar__actions {
-    justify-content: flex-start;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  .visual-hierarchy-stats {
+    display: flex;
+    flex-wrap: nowrap;
+    gap: 12px;
+    overflow-x: auto;
+    padding-bottom: 6px;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .visual-hierarchy-stats::-webkit-scrollbar {
+    display: none;
+  }
+
+  .visual-hierarchy-stat-card {
+    flex: 0 0 160px;
+  }
+
+  .visual-hierarchy-toolbar__pager {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .visual-hierarchy-workspace {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    flex: none;
+    min-height: auto;
+  }
+
+  .visual-hierarchy-canvas {
+    flex: none;
+    height: auto;
+    --vh-canvas-min-height: clamp(360px, 65vh, 640px);
+  }
+
+  .visual-hierarchy-inspector {
+    max-height: none;
+    overflow: visible;
+    width: 100%;
+    opacity: 1;
+  }
+
+  .visual-hierarchy-breadcrumbs {
+    display: none;
   }
 }

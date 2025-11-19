@@ -37,6 +37,7 @@ type HierarchyCanvasProps = {
   childPageIndex: number;
   childrenPageSize: number;
   showAllChildren: boolean;
+  minZoom?: number;
 };
 
 const nodeTypes = {
@@ -65,8 +66,10 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
   childPageIndex,
   childrenPageSize,
   showAllChildren,
+  minZoom,
 }, ref) => {
   const layout = useElkLayout({ density });
+  const effectiveMinZoom = minZoom ?? CANVAS_MIN_ZOOM;
   const highlightSet = useMemo(() => new Set(highlightedPath), [highlightedPath]);
 
   const hoverSet = useMemo(() => {
@@ -215,13 +218,13 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
         panOnDrag
         selectionOnDrag={false}
         fitView
-        fitViewOptions={{ padding: CANVAS_FIT_VIEW_PADDING, includeHiddenNodes: true, minZoom: CANVAS_MIN_ZOOM }}
+        fitViewOptions={{ padding: CANVAS_FIT_VIEW_PADDING, includeHiddenNodes: true, minZoom: effectiveMinZoom }}
         zoomOnScroll
         nodesFocusable
         deleteKeyCode={[]}
         onInit={onInit}
         onPaneClick={() => onSelectNode(null)}
-        minZoom={CANVAS_MIN_ZOOM}
+        minZoom={effectiveMinZoom}
         maxZoom={CANVAS_MAX_ZOOM}
       >
         <Background gap={24} color={theme === 'light' ? '#e5e7eb' : '#1f2532'} />
