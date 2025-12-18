@@ -186,6 +186,25 @@
   transition: background 140ms ease;
 }
 
+.visual-hierarchy-export-dropdown__item:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.visual-hierarchy-export-dropdown__item:disabled:hover {
+  background: transparent;
+}
+
+.visual-hierarchy-export-dropdown__divider {
+  height: 1px;
+  width: 100%;
+  background: rgba(71, 85, 105, 0.4);
+}
+
+.visual-hierarchy-page[data-theme='light'] .visual-hierarchy-export-dropdown__divider {
+  background: rgba(203, 213, 225, 0.8);
+}
+
 .visual-hierarchy-export-dropdown__item:hover {
   background: rgba(59, 130, 246, 0.18);
 }

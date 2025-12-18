@@ -19,7 +19,7 @@ import {
   Users,
 } from 'lucide-react';
 import { toPng, toSvg } from 'html-to-image';
-import type { ReactFlowInstance } from 'reactflow';
+import { getNodesBounds, getViewportForBounds, type ReactFlowInstance } from 'reactflow';
 import type { GHLHierarchyNode, GHLSnapshot } from '../lib/types';
 import HierarchyCanvas, { CANVAS_FIT_VIEW_PADDING, CANVAS_MIN_ZOOM } from '../components/hierarchy/HierarchyCanvas';
 import {
@@ -45,6 +45,12 @@ const SCOPE_STORAGE_KEY = 'visual-hierarchy-scope-root';
 const DEFAULT_SCOPE_DEPTH_PAD = 5;
 const CHILDREN_PAGE_SIZE = 8;
 const SURELC_DEMO_LINK_ENABLED = false;
+
+type ExportMode =
+  | 'viewport-svg'
+  | 'viewport-png'
+  | 'full-svg'
+  | 'selected-branch-csv';
 
 const statusMap: Record<GHLHierarchyNode['status'], PersonStatus> = {
   ACTIVE: 'active',
@@ -589,16 +595,88 @@ const VisualHierarchyPage: React.FC = () => {
   );
 
   const handleExport = useCallback(
-    async (mode: 'viewport-svg' | 'viewport-png' | 'full-svg') => {
+    async (mode: ExportMode) => {
+      if (!graph) return;
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+
+      if (mode === 'selected-branch-csv') {
+        const exportRootId = selectedNodeId ?? scopeRootId;
+        if (!exportRootId || !graph.nodesById.has(exportRootId)) {
+          window.alert('Select a node (or focus a branch) to export a CSV.');
+          return;
+        }
+
+        const exportRootNode = graph.nodesById.get(exportRootId);
+        if (!exportRootNode) {
+          window.alert('Unable to export CSV: selected node not found.');
+          return;
+        }
+
+        const scopeLabel = sanitizeFilenamePart(exportRootNode.name);
+        const filename = `hierarchy-${scopeLabel}-branch-${timestamp}.csv`;
+
+        const uplineRows = buildUplineCsvRows(exportRootId, graph, parentMap)
+          .filter((row) => row.distanceFromSelected < 0)
+          .map((row) => ({ ...row, segment: 'upline' as const }));
+
+        const selectedRow: ExportCsvRow = {
+          node: exportRootNode,
+          distanceFromSelected: 0,
+          segment: 'selected',
+        };
+
+        const downlineRows = collectDownlineCsvRows(exportRootId, graph)
+          .filter((row) => row.distanceFromSelected > 0)
+          .map((row) => ({ ...row, segment: 'downline' as const }));
+
+        const rows = [...uplineRows, selectedRow, ...downlineRows];
+
+        const csv = generateHierarchyCsv(rows, graph);
+        downloadCsv(csv, filename);
+        return;
+      }
+
       if (!canvasRef.current) return;
       const element = canvasRef.current.querySelector('.react-flow__viewport') as HTMLElement | null;
       if (!element) return;
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      const rootName = graph?.rootIds.map((id) => graph.nodesById.get(id)?.name ?? 'root').join('-') ?? 'hierarchy';
+      const rootName = graph.rootIds.map((id) => graph.nodesById.get(id)?.name ?? 'root').join('-') || 'hierarchy';
       const baseName = `upline-${rootName}-${density}-${timestamp}`;
 
       if (mode === 'viewport-png') {
-        const dataUrl = await toPng(element, { pixelRatio: window.devicePixelRatio * 2 });
+        const backgroundColor = theme === 'light' ? '#f7fafc' : '#0e1117';
+        const instance = reactFlowInstance;
+        const nodes = instance?.getNodes?.() ?? [];
+
+        if (instance && nodes.length > 0) {
+          const bounds = getNodesBounds(nodes);
+          if (!Number.isFinite(bounds.width) || !Number.isFinite(bounds.height) || bounds.width < 20 || bounds.height < 20) {
+            const dataUrl = await toPng(element, { backgroundColor, pixelRatio: window.devicePixelRatio * 2 });
+            downloadDataUrl(dataUrl, `${baseName}.png`);
+            return;
+          }
+          const padding = 180;
+          const targetWidth = clampNumber(Math.ceil((bounds.width + padding * 2) * 1.25), 1200, 5600);
+          const targetHeight = clampNumber(Math.ceil((bounds.height + padding * 2) * 1.25), 800, 5600);
+          const viewport = getViewportForBounds(bounds, targetWidth, targetHeight, CANVAS_MIN_ZOOM, 2, 0.18);
+          const pixelRatio = getExportPngPixelRatio(targetWidth, targetHeight);
+
+          const dataUrl = await toPng(element, {
+            backgroundColor,
+            width: targetWidth,
+            height: targetHeight,
+            pixelRatio,
+            style: {
+              width: `${targetWidth}px`,
+              height: `${targetHeight}px`,
+              transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+              transformOrigin: '0 0',
+            },
+          });
+          downloadDataUrl(dataUrl, `${baseName}.png`);
+          return;
+        }
+
+        const dataUrl = await toPng(element, { backgroundColor, pixelRatio: window.devicePixelRatio * 2 });
         downloadDataUrl(dataUrl, `${baseName}.png`);
         return;
       }
@@ -611,7 +689,7 @@ const VisualHierarchyPage: React.FC = () => {
 
       if (mode === 'full-svg') {
         const prevExpanded = new Set(expandedIds);
-        const allIds = graph ? Array.from(graph.nodesById.keys()) : [];
+        const allIds = Array.from(graph.nodesById.keys());
         setExpandedIds(allIds);
         await new Promise((resolve) => setTimeout(resolve, 120));
         const fullElement = canvasRef.current.querySelector('.react-flow__viewport') as HTMLElement | null;
@@ -622,7 +700,7 @@ const VisualHierarchyPage: React.FC = () => {
         setExpandedIds(prevExpanded);
       }
     },
-    [canvasRef, graph, density, expandedIds, setExpandedIds],
+    [canvasRef, graph, density, expandedIds, setExpandedIds, parentMap, scopeRootId, selectedNodeId, reactFlowInstance, theme],
   );
 
   const handleRefresh = useCallback(() => {
@@ -741,17 +819,6 @@ const VisualHierarchyPage: React.FC = () => {
                     type="button"
                     className="visual-hierarchy-export-dropdown__item"
                     onClick={() => {
-                      handleExport('viewport-svg');
-                      setExportDropdownOpen(false);
-                    }}
-                  >
-                    <Download size={16} />
-                    Export SVG
-                  </button>
-                  <button
-                    type="button"
-                    className="visual-hierarchy-export-dropdown__item"
-                    onClick={() => {
                       handleExport('viewport-png');
                       setExportDropdownOpen(false);
                     }}
@@ -759,16 +826,19 @@ const VisualHierarchyPage: React.FC = () => {
                     <Download size={16} />
                     Export PNG
                   </button>
+                  <div className="visual-hierarchy-export-dropdown__divider" />
                   <button
                     type="button"
                     className="visual-hierarchy-export-dropdown__item"
+                    disabled={!selectedNodeId && !scopeRootId}
+                    title={!selectedNodeId && !scopeRootId ? 'Select a node (or focus a branch) to export.' : undefined}
                     onClick={() => {
-                      handleExport('full-svg');
+                      handleExport('selected-branch-csv');
                       setExportDropdownOpen(false);
                     }}
                   >
                     <Download size={16} />
-                    Export Full Tree
+                    Export Branch CSV
                   </button>
                 </div>
               )}
@@ -1166,6 +1236,123 @@ const buildHierarchyGraph = (
   };
 };
 
+const clampNumber = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+
+const getExportPngPixelRatio = (width: number, height: number) => {
+  const maxOutputPixels = 24_000_000;
+  const basePixels = Math.max(1, width * height);
+  const maxRatio = Math.floor(Math.sqrt(maxOutputPixels / basePixels));
+  return clampNumber(Number.isFinite(maxRatio) ? maxRatio : 1, 1, 3);
+};
+
+type ExportCsvRow = {
+  node: PersonNode;
+  distanceFromSelected: number;
+  segment?: 'upline' | 'downline' | 'selected';
+};
+
+const escapeCsvField = (value: unknown) => {
+  if (value === null || value === undefined) return '';
+  const str = String(value);
+  if (/[",\r\n]/.test(str)) {
+    return `"${str.replace(/"/g, '""')}"`;
+  }
+  return str;
+};
+
+const sanitizeFilenamePart = (value: string) => {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return 'selection';
+  const cleaned = trimmed
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, '-')
+    .replace(/[^a-z0-9-_]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned.slice(0, 80) || 'selection';
+};
+
+const buildUplineCsvRows = (nodeId: string, graph: HierarchyGraph, parentMap: Map<string, string | null>): ExportCsvRow[] => {
+  const path = buildAncestorPath(nodeId, parentMap);
+  const selectedIndex = path.length - 1;
+  return path
+    .map((id, idx) => {
+      const node = graph.nodesById.get(id);
+      if (!node) return null;
+      return { node, distanceFromSelected: idx - selectedIndex };
+    })
+    .filter((row): row is ExportCsvRow => row !== null);
+};
+
+const collectDownlineCsvRows = (rootId: string, graph: HierarchyGraph): ExportCsvRow[] => {
+  const rows: ExportCsvRow[] = [];
+  const visited = new Set<string>();
+
+  const visit = (id: string, distance: number) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = graph.nodesById.get(id);
+    if (!node) return;
+    rows.push({ node, distanceFromSelected: distance });
+    node.childrenIds.forEach((childId) => visit(childId, distance + 1));
+  };
+
+  visit(rootId, 0);
+  return rows;
+};
+
+const generateHierarchyCsv = (rows: ExportCsvRow[], graph: HierarchyGraph) => {
+  const headers = [
+    'Contact ID',
+    'Name',
+    'NPN',
+    'Email',
+    'Status',
+    'Company',
+    'Comp Level',
+    'Licensing State',
+    'Vendor Group',
+    'Upline ID',
+    'Upline Name',
+    'Upline Source',
+    'Upline Confidence',
+    'Direct Reports',
+    'Total Downline',
+    'Last Touch',
+    'Depth',
+    'Distance From Selected',
+    'Segment',
+  ];
+
+  const lines: string[] = [headers.map(escapeCsvField).join(',')];
+  rows.forEach(({ node, distanceFromSelected, segment }) => {
+    const upline = node.parentId ? graph.nodesById.get(node.parentId) : null;
+    lines.push(
+      [
+        node.id,
+        node.name,
+        node.npn ?? '',
+        node.email ?? '',
+        node.status.toUpperCase(),
+        node.sourceNode.companyName ?? '',
+        node.sourceNode.compLevel ?? '',
+        node.sourceNode.licensingState ?? '',
+        node.vendorGroup ?? '',
+        node.parentId ?? '',
+        upline?.name ?? '',
+        node.uplineSource ?? '',
+        node.sourceNode.uplineConfidence ?? '',
+        node.metrics.directReports ?? '',
+        node.metrics.descendantCount ?? '',
+        node.metrics.lastSeen ?? '',
+        node.depth,
+        distanceFromSelected,
+        segment ?? '',
+      ].map(escapeCsvField).join(','),
+    );
+  });
+  return lines.join('\n');
+};
+
 const downloadDataUrl = (dataUrl: string, filename: string) => {
   const link = document.createElement('a');
   link.href = dataUrl;
@@ -1175,6 +1362,16 @@ const downloadDataUrl = (dataUrl: string, filename: string) => {
 
 const downloadText = (svgData: string, filename: string) => {
   const blob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+};
+
+const downloadCsv = (csvData: string, filename: string) => {
+  const blob = new Blob([`\uFEFF${csvData}`], { type: 'text/csv;charset=utf-8;' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;

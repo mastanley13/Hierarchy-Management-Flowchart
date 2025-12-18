@@ -1,4 +1,9 @@
-<!-- 5425a281-195c-4f54-bb83-bafa374c3e92 ed771a36-bf12-4cb4-8233-9dad7b8e3138 -->
+---
+name: NotebookLM-Style Contact Card Redesign
+overview: ""
+todos: []
+---
+
 # NotebookLM-Style Contact Card Redesign
 
 ## Overview
