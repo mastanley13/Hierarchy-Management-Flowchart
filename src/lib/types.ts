@@ -250,12 +250,22 @@ export type FileValidationResult = {
 
 // HighLevel hierarchy snapshot types
 
+export type GHLOpportunitySummary = {
+  pipelineId: string | null;
+  pipelineStageId: string | null;
+  monetaryValue: unknown;
+  assignedTo: string | null;
+  customFields: Record<string, unknown>;
+};
+
 export type GHLHierarchyNode = {
   id: string;
   label: string;
   npn: string | null;
   surelcId: string | null;
   email: string | null;
+  phone: string | null;
+  source: string | null;
   companyName?: string | null;
   customFields: Record<string, unknown>;
   vendorFlags: {
@@ -297,6 +307,7 @@ export type GHLHierarchyNode = {
     uplineNotFound: boolean;
     cycleBreak: boolean;
   };
+  opportunity: GHLOpportunitySummary | null;
   raw: {
     uplineProducerId: string | null;
     uplineEmail: string | null;
@@ -360,6 +371,7 @@ export type GHLCustomFieldDefinition = {
 export type GHLSnapshot = {
   generatedAt: string;
   customFieldDefs: GHLCustomFieldDefinition[];
+  opportunityCustomFieldDefs?: GHLCustomFieldDefinition[];
   stats: GHLSnapshotStats;
   issues: GHLIssueSummary;
   hierarchy: GHLHierarchyNode[];

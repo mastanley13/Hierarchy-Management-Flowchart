@@ -22,6 +22,7 @@ import { toPng, toSvg } from 'html-to-image';
 import { getNodesBounds, getViewportForBounds, type ReactFlowInstance } from 'reactflow';
 import type { GHLHierarchyNode, GHLSnapshot } from '../lib/types';
 import HierarchyCanvas, { CANVAS_FIT_VIEW_PADDING, CANVAS_MIN_ZOOM } from '../components/hierarchy/HierarchyCanvas';
+import { CollapsibleSection } from '../components/hierarchy/CollapsibleSection';
 import {
   useHierarchyStore,
   useDensity,
@@ -42,7 +43,6 @@ import './VisualHierarchyPage.css';
 
 const EXPANSION_STORAGE_KEY = 'visual-hierarchy-expanded-ids';
 const SCOPE_STORAGE_KEY = 'visual-hierarchy-scope-root';
-const DEFAULT_SCOPE_DEPTH_PAD = 5;
 const CHILDREN_PAGE_SIZE = 8;
 const SURELC_DEMO_LINK_ENABLED = false;
 
@@ -50,7 +50,17 @@ type ExportMode =
   | 'viewport-svg'
   | 'viewport-png'
   | 'full-svg'
-  | 'selected-branch-csv';
+  | 'selected-branch-csv'
+  | 'all-csv';
+
+type FieldRow = {
+  label: string;
+  value: string | number;
+  rawValue?: unknown;
+  link?: string;
+  tone?: 'accent' | 'warning' | 'muted';
+  dataType?: 'text' | 'date' | 'boolean' | 'number';
+};
 
 const statusMap: Record<GHLHierarchyNode['status'], PersonStatus> = {
   ACTIVE: 'active',
@@ -76,8 +86,9 @@ const formatDate = (value?: string | null) => {
   });
 };
 
-const fetchSnapshotData = async (): Promise<GHLSnapshot> => {
-  const response = await fetch('/api/ghl/snapshot', {
+const fetchSnapshotData = async (options?: { includeOpportunities?: boolean }): Promise<GHLSnapshot> => {
+  const url = options?.includeOpportunities ? '/api/ghl/snapshot?includeOpportunities=1' : '/api/ghl/snapshot';
+  const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
     },
@@ -306,6 +317,37 @@ const VisualHierarchyPage: React.FC = () => {
     return graph.nodesById.get(scopeRootId) ?? null;
   }, [graph, scopeRootId]);
 
+  // Helper functions for field value formatting
+  const formatFieldValue = (value: unknown, dataType?: 'text' | 'date' | 'boolean' | 'number'): string => {
+    if (value === null || value === undefined || value === '') return '-';
+
+    if (dataType === 'boolean') {
+      return value ? 'Yes' : 'No';
+    }
+
+    if (dataType === 'date') {
+      return formatDate(String(value)) ?? String(value);
+    }
+
+    if (typeof value === 'number') {
+      return value.toLocaleString();
+    }
+
+    if (Array.isArray(value)) {
+      return value.length > 0 ? value.join('; ') : '-';
+    }
+
+    return String(value);
+  };
+
+  const readCustomField = (node: PersonNode, key: string): unknown => {
+    return node.sourceNode.customFields?.[key];
+  };
+
+  const readOpportunityCustomField = (node: PersonNode, key: string): unknown => {
+    return node.sourceNode.opportunity?.customFields?.[key];
+  };
+
   const selectedNodeInfo = useMemo(() => {
     if (!selectedNode) return null;
     const totalDirectReports =
@@ -392,6 +434,215 @@ const VisualHierarchyPage: React.FC = () => {
       { label: 'NPN', value: selectedNode.npn ?? '-' },
     ];
 
+    // Category 1: Contact Information
+    const contactInfo: FieldRow[] = [
+      { label: 'Contact ID', value: selectedNode.id },
+      { label: 'Name', value: selectedNode.name },
+      { label: 'NPN', value: selectedNode.npn ?? '-' },
+      {
+        label: 'Email',
+        value: selectedNode.email ?? '-',
+        link: selectedNode.email ? `mailto:${selectedNode.email}` : undefined
+      },
+      {
+        label: 'Phone',
+        value: selectedNode.sourceNode.phone ?? '-',
+        link: selectedNode.sourceNode.phone ? `tel:${selectedNode.sourceNode.phone}` : undefined
+      },
+      { label: 'Source', value: selectedNode.sourceNode.source ?? '-' },
+      { label: 'Status', value: selectedNode.status.toUpperCase() },
+      {
+        label: 'Profile',
+        value: (() => {
+          const flags = selectedNode.sourceNode.flags;
+          if (flags?.equitaProfile && flags?.quilityProfile) return 'Combined';
+          if (flags?.equitaProfile) return 'Equita';
+          if (flags?.quilityProfile) return 'Quility';
+          return '-';
+        })()
+      },
+    ];
+
+    // Category 2: Organization & Role
+    const organizationInfo: FieldRow[] = [
+      { label: 'Company', value: selectedNode.sourceNode.companyName ?? '-' },
+      { label: 'Comp Level', value: selectedNode.sourceNode.compLevel ?? '-' },
+      {
+        label: 'Comp Level Link',
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.comp_level_link'))
+      },
+      {
+        label: 'Comp Level Notes',
+        value: formatFieldValue(
+          readCustomField(selectedNode, 'contact.custom_comp_level_notes') ??
+          selectedNode.sourceNode.compLevelNotes
+        )
+      },
+    ];
+
+    // Category 3: Hierarchy Relationship
+    const hierarchyInfo: FieldRow[] = [
+      { label: 'Upline ID', value: selectedNode.parentId ?? '-' },
+      {
+        label: 'Upline Name',
+        value: selectedNode.sourceNode.raw?.uplineName ?? '-'
+      },
+      { label: 'Upline Source', value: sourceLabel },
+      {
+        label: 'Upline Confidence',
+        value: selectedNode.sourceNode.uplineConfidence !== undefined
+          ? `${(selectedNode.sourceNode.uplineConfidence * 100).toFixed(0)}%`
+          : '-'
+      },
+      {
+        label: 'Upline Highest Stage',
+        value: selectedNode.sourceNode.raw?.uplineHighestStage ?? '-'
+      },
+      { label: 'Depth', value: selectedNode.depth },
+      { label: 'Distance From Selected', value: '-' }, // Will be populated when viewing from selection context
+    ];
+
+    // Category 4: Branch Metrics
+    const branchMetrics: FieldRow[] = [
+      { label: 'Direct Reports', value: totalDirectReports },
+      { label: 'Total Downline', value: descendantCount },
+      { label: 'Segment', value: '-' }, // Will be populated during CSV export
+    ];
+
+    // Category 5: Licensing & Location
+    const licensingInfo: FieldRow[] = [
+      { label: 'Licensing State', value: selectedNode.sourceNode.licensingState ?? '-' },
+      {
+        label: 'NPN (Onboarding)',
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.onboarding__npn'))
+      },
+    ];
+
+    // Category 6: Vendor Configuration
+    const vendorConfig: FieldRow[] = [
+      { label: 'Vendor Group', value: selectedNode.vendorGroup ?? '-' },
+      {
+        label: 'Upline Code (Equita)',
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.upline_code_equita'))
+      },
+      {
+        label: 'Upline Code (Quility)',
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.upline_code_quility'))
+      },
+      {
+        label: 'Equita Profile Created',
+        value: formatFieldValue(selectedNode.sourceNode.flags?.equitaProfile, 'boolean')
+      },
+      {
+        label: 'Quility Profile Created',
+        value: formatFieldValue(selectedNode.sourceNode.flags?.quilityProfile, 'boolean')
+      },
+    ];
+
+    // Category 7: Onboarding Status
+    const onboardingStatus: FieldRow[] = [
+      {
+        label: 'Licensed',
+        value: formatFieldValue(selectedNode.sourceNode.flags?.licensed, 'boolean')
+      },
+      {
+        label: 'Producer Number',
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.onboarding__producer_number'))
+      },
+      {
+        label: 'Cluster Applies',
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.onboarding__cluster_applies'), 'boolean')
+      },
+      {
+        label: 'Upline Email',
+        value: selectedNode.sourceNode.raw?.uplineEmail ?? '-',
+        link: selectedNode.sourceNode.raw?.uplineEmail ? `mailto:${selectedNode.sourceNode.raw.uplineEmail}` : undefined
+      },
+      { label: 'Last Touch', value: lastSeen ?? '-' },
+    ];
+
+    // Category 8: XCEL Training
+    const xcelTraining: FieldRow[] = [
+      {
+        label: 'XCEL Account Created',
+        value: formatFieldValue(selectedNode.sourceNode.flags?.xcelAccountCreated, 'boolean')
+      },
+      {
+        label: 'Username/Email',
+        value: selectedNode.sourceNode.xcel?.username ?? '-'
+      },
+      {
+        label: 'Temp Password',
+        value: selectedNode.sourceNode.xcel?.tempPassword ?? '-'
+      },
+      {
+        label: 'Enrollment Date',
+        value: formatFieldValue(selectedNode.sourceNode.xcel?.enrollmentDate, 'date')
+      },
+      {
+        label: 'Due Date',
+        value: formatFieldValue(selectedNode.sourceNode.xcel?.dueDate, 'date')
+      },
+      {
+        label: 'Last Touch',
+        value: formatFieldValue(selectedNode.sourceNode.xcel?.lastTouch, 'date')
+      },
+      {
+        label: 'Started',
+        value: formatFieldValue(selectedNode.sourceNode.flags?.xcelStarted, 'boolean')
+      },
+      {
+        label: 'Paid',
+        value: formatFieldValue(selectedNode.sourceNode.flags?.xcelPaid, 'boolean')
+      },
+    ];
+
+    // Category 9: Pipeline & Opportunity
+    const pipelineInfo: FieldRow[] = [
+      {
+        label: 'Pipeline ID',
+        value: selectedNode.sourceNode.opportunity?.pipelineId ?? '-'
+      },
+      {
+        label: 'Pipeline Stage ID',
+        value: selectedNode.sourceNode.opportunity?.pipelineStageId ?? '-'
+      },
+      {
+        label: 'Monetary Value',
+        value: selectedNode.sourceNode.opportunity?.monetaryValue
+          ? `$${selectedNode.sourceNode.opportunity.monetaryValue.toLocaleString()}`
+          : '-'
+      },
+      {
+        label: 'Assigned To',
+        value: formatFieldValue(readOpportunityCustomField(selectedNode, 'opportunity.assigned_to'))
+      },
+    ];
+
+    // Category 10: Carrier Application
+    const carrierApp: FieldRow[] = [
+      {
+        label: 'Carrier Name',
+        value: formatFieldValue(readOpportunityCustomField(selectedNode, 'opportunity.carrier_app__carrier_name'))
+      },
+      {
+        label: 'Cluster',
+        value: formatFieldValue(readOpportunityCustomField(selectedNode, 'opportunity.carrier_app__cluster'))
+      },
+      {
+        label: 'Eligible',
+        value: formatFieldValue(readOpportunityCustomField(selectedNode, 'opportunity.carrier_app__eligible'), 'boolean')
+      },
+      {
+        label: 'Upline Code Received',
+        value: formatFieldValue(readOpportunityCustomField(selectedNode, 'opportunity.carrier_app__upline_code_received'), 'boolean')
+      },
+      {
+        label: 'Current Disposition',
+        value: formatFieldValue(readOpportunityCustomField(selectedNode, 'opportunity.carrier_app__current_disposition'))
+      },
+    ];
+
     return {
       initials: getInitials(selectedNode.name),
       branchChips,
@@ -400,6 +651,16 @@ const VisualHierarchyPage: React.FC = () => {
       lastSeen,
       stats,
       detailCards,
+      contactInfo,
+      organizationInfo,
+      hierarchyInfo,
+      branchMetrics,
+      licensingInfo,
+      vendorConfig,
+      onboardingStatus,
+      xcelTraining,
+      pipelineInfo,
+      carrierApp,
     };
   }, [selectedNode]);
 
@@ -490,29 +751,6 @@ const VisualHierarchyPage: React.FC = () => {
       focusNode(nodeId);
     },
     [focusNode, setSelectedNodeId, setHighlightedPath],
-  );
-
-  const handleFocusBranch = useCallback(
-    (nodeId: string) => {
-      if (!graph) return;
-      const node = graph.nodesById.get(nodeId);
-      if (!node) return;
-      setScopeRootId(nodeId);
-      focusNode(nodeId);
-      if (!focusLens) {
-        setFocusLensValue(true);
-        autoFocusLensRef.current = true;
-      } else {
-        autoFocusLensRef.current = false;
-      }
-      if (depthLimit === null) {
-        setDepthLimit(DEFAULT_SCOPE_DEPTH_PAD);
-        depthLimitAutoRef.current = true;
-      } else {
-        depthLimitAutoRef.current = false;
-      }
-    },
-    [graph, focusNode, setScopeRootId, focusLens, setFocusLensValue, depthLimit],
   );
 
   const handleClearScope = useCallback(() => {
@@ -615,23 +853,62 @@ const VisualHierarchyPage: React.FC = () => {
         const scopeLabel = sanitizeFilenamePart(exportRootNode.name);
         const filename = `hierarchy-${scopeLabel}-branch-${timestamp}.csv`;
 
-        const uplineRows = buildUplineCsvRows(exportRootId, graph, parentMap)
+        let exportGraph = graph;
+        let exportParentMap = parentMap;
+        let exportFieldLabels = buildExportFieldLabelMap();
+        try {
+          const exportSnapshot = await fetchSnapshotData({ includeOpportunities: true });
+          const built = buildHierarchyGraph(exportSnapshot.hierarchy);
+          exportGraph = built.graph;
+          exportParentMap = built.parentMap;
+          exportFieldLabels = buildExportFieldLabelMap(exportSnapshot);
+        } catch (error) {
+          console.warn('CSV export: unable to fetch opportunity data, exporting with available snapshot fields.', error);
+        }
+
+        const exportRootNodeForData = exportGraph.nodesById.get(exportRootId);
+        if (!exportRootNodeForData) {
+          window.alert('Unable to export CSV: selected node not found in export snapshot.');
+          return;
+        }
+
+        const uplineRows = buildUplineCsvRows(exportRootId, exportGraph, exportParentMap)
           .filter((row) => row.distanceFromSelected < 0)
           .map((row) => ({ ...row, segment: 'upline' as const }));
 
         const selectedRow: ExportCsvRow = {
-          node: exportRootNode,
+          node: exportRootNodeForData,
           distanceFromSelected: 0,
           segment: 'selected',
         };
 
-        const downlineRows = collectDownlineCsvRows(exportRootId, graph)
+        const downlineRows = collectDownlineCsvRows(exportRootId, exportGraph)
           .filter((row) => row.distanceFromSelected > 0)
           .map((row) => ({ ...row, segment: 'downline' as const }));
 
         const rows = [...uplineRows, selectedRow, ...downlineRows];
 
-        const csv = generateHierarchyCsv(rows, graph);
+        const csv = generateHierarchyCsv(rows, exportGraph, exportFieldLabels);
+        downloadCsv(csv, filename);
+        return;
+      }
+
+      if (mode === 'all-csv') {
+        const filename = `hierarchy-all-${timestamp}.csv`;
+
+        let exportGraph = graph;
+        let exportFieldLabels = buildExportFieldLabelMap();
+        try {
+          const exportSnapshot = await fetchSnapshotData({ includeOpportunities: true });
+          const built = buildHierarchyGraph(exportSnapshot.hierarchy);
+          exportGraph = built.graph;
+          exportFieldLabels = buildExportFieldLabelMap(exportSnapshot);
+        } catch (error) {
+          console.warn('CSV export: unable to fetch opportunity data, exporting with available snapshot fields.', error);
+        }
+
+        const rows = collectAllCsvRows(exportGraph);
+        const csv = generateHierarchyCsv(rows, exportGraph, exportFieldLabels);
         downloadCsv(csv, filename);
         return;
       }
@@ -825,6 +1102,17 @@ const VisualHierarchyPage: React.FC = () => {
                   >
                     <Download size={16} />
                     Export PNG
+                  </button>
+                  <button
+                    type="button"
+                    className="visual-hierarchy-export-dropdown__item"
+                    onClick={() => {
+                      handleExport('all-csv');
+                      setExportDropdownOpen(false);
+                    }}
+                  >
+                    <Download size={16} />
+                    Export All CSV
                   </button>
                   <div className="visual-hierarchy-export-dropdown__divider" />
                   <button
@@ -1091,19 +1379,6 @@ const VisualHierarchyPage: React.FC = () => {
                     </div>
                   </div>
                 </header>
-                <div className="visual-hierarchy-inspector__actions">
-                  {scopeRootId === selectedNode.id ? (
-                    <button type="button" onClick={handleClearScope}>
-                      <ArrowLeft size={14} />
-                      Exit focus
-                    </button>
-                  ) : (
-                    <button type="button" onClick={() => handleFocusBranch(selectedNode.id)}>
-                      <Target size={14} />
-                      Focus this branch
-                    </button>
-                  )}
-                </div>
                 {selectedNodeInfo?.branchChips.length ? (
                   <div className="visual-hierarchy-inspector__branch">
                     {selectedNodeInfo.branchChips.map((chip) => (
@@ -1129,25 +1404,155 @@ const VisualHierarchyPage: React.FC = () => {
                     ))}
                   </div>
                 ) : null}
-                {selectedNodeInfo?.detailCards?.length ? (
-                  <div className="visual-hierarchy-inspector__details">
-                    {selectedNodeInfo.detailCards.map((card) => (
-                      <div key={card.label} className="visual-hierarchy-inspector__detail-row">
-                        <span className="visual-hierarchy-inspector__detail-label">{card.label}</span>
-                        {card.link && card.value !== '-' ? (
-                          <a
-                            href={card.link}
-                            className="visual-hierarchy-inspector__detail-value visual-hierarchy-inspector__detail-value--link"
-                          >
-                            {card.value}
-                          </a>
-                        ) : (
-                          <span className="visual-hierarchy-inspector__detail-value">{card.value}</span>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
+                <div className="visual-hierarchy-inspector__comprehensive">
+                  <CollapsibleSection title="Contact Information" defaultOpen={true} badge={selectedNodeInfo?.contactInfo.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.contactInfo.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          {field.link ? (
+                            <a
+                              href={field.link}
+                              className="visual-hierarchy-inspector__detail-value visual-hierarchy-inspector__detail-value--link"
+                            >
+                              {field.value}
+                            </a>
+                          ) : (
+                            <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                              {field.value}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Organization & Role" badge={selectedNodeInfo?.organizationInfo.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.organizationInfo.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Hierarchy Relationship" badge={selectedNodeInfo?.hierarchyInfo.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.hierarchyInfo.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Branch Metrics" defaultOpen={true} badge={selectedNodeInfo?.branchMetrics.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.branchMetrics.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Licensing & Location" badge={selectedNodeInfo?.licensingInfo.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.licensingInfo.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Vendor Configuration" badge={selectedNodeInfo?.vendorConfig.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.vendorConfig.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Onboarding Status" badge={selectedNodeInfo?.onboardingStatus.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.onboardingStatus.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          {field.link ? (
+                            <a
+                              href={field.link}
+                              className="visual-hierarchy-inspector__detail-value visual-hierarchy-inspector__detail-value--link"
+                            >
+                              {field.value}
+                            </a>
+                          ) : (
+                            <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                              {field.value}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="XCEL Training" badge={selectedNodeInfo?.xcelTraining.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.xcelTraining.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Pipeline & Opportunity" badge={selectedNodeInfo?.pipelineInfo.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.pipelineInfo.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="Carrier Application" badge={selectedNodeInfo?.carrierApp.length}>
+                    <div className="visual-hierarchy-inspector__details">
+                      {selectedNodeInfo?.carrierApp.map((field) => (
+                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                          <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                            {field.value}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </CollapsibleSection>
+                </div>
               </>
             ) : (
               <div className="visual-hierarchy-inspector__empty">
@@ -1248,12 +1653,26 @@ const getExportPngPixelRatio = (width: number, height: number) => {
 type ExportCsvRow = {
   node: PersonNode;
   distanceFromSelected: number;
-  segment?: 'upline' | 'downline' | 'selected';
+  segment?: 'upline' | 'downline' | 'selected' | 'all';
+};
+
+const toCsvScalar = (value: unknown): string => {
+  if (value === null || value === undefined) return '';
+  if (Array.isArray(value)) {
+    return value.map((entry) => toCsvScalar(entry)).filter(Boolean).join('; ');
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+  return String(value);
 };
 
 const escapeCsvField = (value: unknown) => {
-  if (value === null || value === undefined) return '';
-  const str = String(value);
+  const str = toCsvScalar(value);
   if (/[",\r\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }
@@ -1269,6 +1688,50 @@ const sanitizeFilenamePart = (value: string) => {
     .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '');
   return cleaned.slice(0, 80) || 'selection';
+};
+
+const buildExportFieldLabelMap = (snapshot?: GHLSnapshot | null): Record<string, string> => {
+  const labels: Record<string, string> = {
+    'contact.source': 'Source',
+    'contact.phone_number': 'Phone Number',
+    'contact.phone_numer': 'Phone Numer',
+    'opportunity.pipeline_id': 'Pipeline ID',
+    'opportunity.pipeline_stage_id': 'Pipeline Stage ID',
+    'opportunity.monetary_value': 'Monetary Value',
+    'opportunity.assigned_to': 'Assigned To',
+  };
+
+  const defs = [...(snapshot?.customFieldDefs ?? []), ...(snapshot?.opportunityCustomFieldDefs ?? [])];
+
+  defs.forEach((def) => {
+    if (def?.fieldKey && def?.name) {
+      labels[def.fieldKey] = def.name;
+    }
+  });
+
+  return labels;
+};
+
+const labelForExportFieldKey = (key: string, labels?: Record<string, string>) => {
+  const fromMap = labels?.[key];
+  if (fromMap) return fromMap;
+
+  const withoutPrefix = key.split('.').slice(1).join('.') || key;
+  const words = withoutPrefix
+    .replace(/__/g, '_')
+    .replace(/[._]+/g, '_')
+    .split('_')
+    .filter(Boolean)
+    .map((word) => {
+      const lower = word.toLowerCase();
+      if (lower === 'id') return 'ID';
+      if (lower === 'npn') return 'NPN';
+      if (lower === 'xcel') return 'XCEL';
+      if (lower === 'mrfg') return 'MRFG';
+      if (lower === 'bga') return 'BGA';
+      return `${word.charAt(0).toUpperCase()}${word.slice(1)}`;
+    });
+  return words.join(' ');
 };
 
 const buildUplineCsvRows = (nodeId: string, graph: HierarchyGraph, parentMap: Map<string, string | null>): ExportCsvRow[] => {
@@ -1300,53 +1763,233 @@ const collectDownlineCsvRows = (rootId: string, graph: HierarchyGraph): ExportCs
   return rows;
 };
 
-const generateHierarchyCsv = (rows: ExportCsvRow[], graph: HierarchyGraph) => {
-  const headers = [
+const collectAllCsvRows = (graph: HierarchyGraph): ExportCsvRow[] => {
+  const rows: ExportCsvRow[] = [];
+  const visited = new Set<string>();
+
+  const visit = (id: string) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = graph.nodesById.get(id);
+    if (!node) return;
+    rows.push({ node, distanceFromSelected: 0, segment: 'all' });
+    node.childrenIds.forEach((childId) => visit(childId));
+  };
+
+  graph.rootIds.forEach((rootId) => visit(rootId));
+  return rows;
+};
+
+const generateHierarchyCsv = (rows: ExportCsvRow[], graph: HierarchyGraph, fieldLabels?: Record<string, string>) => {
+  const readCustom = (node: PersonNode, key: string) => node.sourceNode.customFields?.[key];
+  const readOpportunityCustom = (node: PersonNode, key: string) => node.sourceNode.opportunity?.customFields?.[key];
+  const profile = (node: PersonNode) => {
+    const flags = node.sourceNode.flags;
+    if (flags.equitaProfile && flags.quilityProfile) return 'combined';
+    if (flags.equitaProfile) return 'equita';
+    if (flags.quilityProfile) return 'quility';
+    return '';
+  };
+
+  const baseHeaders = [
+    // contactInfo
     'Contact ID',
     'Name',
-    'NPN',
     'Email',
-    'Status',
+    'Phone',
+
+    // organizationInfo
     'Company',
     'Comp Level',
-    'Licensing State',
-    'Vendor Group',
+
+    // hierarchyInfo
     'Upline ID',
     'Upline Name',
     'Upline Source',
     'Upline Confidence',
+
+    // branchMetrics
     'Direct Reports',
     'Total Downline',
-    'Last Touch',
     'Depth',
     'Distance From Selected',
     'Segment',
+
+    // licensingInfo
+    'Licensing State',
+    'NPN',
+
+    // vendorConfig
+    'Vendor Group',
+    'Profile',
+
+    // onboardingStatus
+    'Status',
+
+    // xcelTraining
+    'Last Touch',
   ];
+
+  const exportFieldKeys = [
+    // contactInfo
+    'contact.source',
+    'contact.phone_number',
+
+    // organizationInfo
+    'contact.comp_level_link',
+    'contact.custom_comp_level_notes',
+
+    // hierarchyInfo
+    'contact.upline_highest_stage',
+    'contact.onboarding__upline_email',
+    'contact.upline_code_equita',
+    'contact.upline_code_quility',
+
+    // licensingInfo
+    'contact.onboarding__licensing_state',
+    'contact.onboarding__licensed',
+    'contact.onboarding__npn',
+    'contact.onboarding__producer_number',
+
+    // vendorConfig
+    'contact.onboarding__equita_profile_created',
+    'contact.onboarding__quility_profile_created',
+
+    // onboardingStatus
+    'contact.onboarding__cluster_applies',
+
+    // xcelTraining
+    'contact.onboarding__xcel_account_created',
+    'contact.onboarding__xcel_username_email',
+    'contact.onboarding__xcel_temp_password',
+    'contact.xcel_enrollment_date',
+    'contact.xcel_due_date',
+    'contact.xcel_last_touch',
+    'contact.onboarding__xcel_started',
+    'contact.onboarding__xcel_paid',
+
+    // pipelineInfo
+    'opportunity.pipeline_id',
+    'opportunity.pipeline_stage_id',
+    'opportunity.monetary_value',
+    'opportunity.assigned_to',
+
+    // carrierApp
+    'opportunity.carrier_app__carrier_name',
+    'opportunity.carrier_app__cluster',
+    'opportunity.carrier_app__eligible',
+    'opportunity.carrier_app__upline_code_received',
+    'opportunity.carrier_app__current_disposition',
+
+    // Legacy / typo alias (kept for compatibility with your request)
+    'contact.phone_numer',
+  ] as const;
+
+  const headers = [...baseHeaders, ...exportFieldKeys.map((key) => labelForExportFieldKey(key, fieldLabels))];
 
   const lines: string[] = [headers.map(escapeCsvField).join(',')];
   rows.forEach(({ node, distanceFromSelected, segment }) => {
     const upline = node.parentId ? graph.nodesById.get(node.parentId) : null;
+    const opp = node.sourceNode.opportunity;
+
+    const baseValues = [
+      // contactInfo
+      node.id,
+      node.name,
+      node.email ?? '',
+      node.sourceNode.phone ?? '',
+
+      // organizationInfo
+      node.sourceNode.companyName ?? '',
+      node.sourceNode.compLevel ?? '',
+
+      // hierarchyInfo
+      node.parentId ?? '',
+      upline?.name ?? '',
+      node.uplineSource ?? '',
+      node.sourceNode.uplineConfidence ?? '',
+
+      // branchMetrics
+      node.metrics.directReports ?? '',
+      node.metrics.descendantCount ?? '',
+      node.depth,
+      distanceFromSelected,
+      segment ?? '',
+      
+      // licensingInfo
+      node.sourceNode.licensingState ?? '',
+      node.npn ?? '',
+
+      // vendorConfig
+      node.vendorGroup ?? '',
+      profile(node),
+
+      // onboardingStatus
+      node.status.toUpperCase(),
+
+      // xcelTraining
+      node.metrics.lastSeen ?? '',
+    ];
+
+    const exportFieldValues = [
+      // contactInfo
+      node.sourceNode.source ?? '',
+      node.sourceNode.phone ?? '',
+
+      // organizationInfo
+      readCustom(node, 'contact.comp_level_link') ?? '',
+      readCustom(node, 'contact.custom_comp_level_notes') ?? node.sourceNode.compLevelNotes ?? '',
+
+      // hierarchyInfo
+      readCustom(node, 'contact.upline_highest_stage') ?? node.sourceNode.raw?.uplineHighestStage ?? '',
+      readCustom(node, 'contact.onboarding__upline_email') ?? node.sourceNode.raw?.uplineEmail ?? '',
+      readCustom(node, 'contact.upline_code_equita') ?? node.sourceNode.vendorFlags?.equita ?? '',
+      readCustom(node, 'contact.upline_code_quility') ?? node.sourceNode.vendorFlags?.quility ?? '',
+
+      // licensingInfo
+      readCustom(node, 'contact.onboarding__licensing_state') ?? node.sourceNode.licensingState ?? '',
+      readCustom(node, 'contact.onboarding__licensed') ?? node.sourceNode.flags.licensed ?? '',
+      readCustom(node, 'contact.onboarding__npn') ?? node.npn ?? '',
+      readCustom(node, 'contact.onboarding__producer_number') ?? node.sourceNode.raw?.surelcId ?? '',
+
+      // vendorConfig
+      readCustom(node, 'contact.onboarding__equita_profile_created') ?? node.sourceNode.flags.equitaProfile ?? '',
+      readCustom(node, 'contact.onboarding__quility_profile_created') ?? node.sourceNode.flags.quilityProfile ?? '',
+
+      // onboardingStatus
+      readCustom(node, 'contact.onboarding__cluster_applies') ?? '',
+
+      // xcelTraining
+      readCustom(node, 'contact.onboarding__xcel_account_created') ?? node.sourceNode.flags.xcelAccountCreated ?? '',
+      readCustom(node, 'contact.onboarding__xcel_username_email') ?? node.sourceNode.xcel?.username ?? '',
+      readCustom(node, 'contact.onboarding__xcel_temp_password') ?? node.sourceNode.xcel?.tempPassword ?? '',
+      readCustom(node, 'contact.xcel_enrollment_date') ?? node.sourceNode.xcel?.enrollmentDate ?? '',
+      readCustom(node, 'contact.xcel_due_date') ?? node.sourceNode.xcel?.dueDate ?? '',
+      readCustom(node, 'contact.xcel_last_touch') ?? node.sourceNode.xcel?.lastTouch ?? '',
+      readCustom(node, 'contact.onboarding__xcel_started') ?? node.sourceNode.flags.xcelStarted ?? '',
+      readCustom(node, 'contact.onboarding__xcel_paid') ?? node.sourceNode.flags.xcelPaid ?? '',
+
+      // pipelineInfo
+      opp?.pipelineId ?? '',
+      opp?.pipelineStageId ?? '',
+      opp?.monetaryValue ?? '',
+      opp?.assignedTo ?? '',
+
+      // carrierApp
+      readOpportunityCustom(node, 'opportunity.carrier_app__carrier_name') ?? '',
+      readOpportunityCustom(node, 'opportunity.carrier_app__cluster') ?? '',
+      readOpportunityCustom(node, 'opportunity.carrier_app__eligible') ?? '',
+      readOpportunityCustom(node, 'opportunity.carrier_app__upline_code_received') ?? '',
+      readOpportunityCustom(node, 'opportunity.carrier_app__current_disposition') ?? '',
+
+      // Legacy / typo alias (kept for compatibility with your request)
+      node.sourceNode.phone ?? '',
+    ];
+
     lines.push(
       [
-        node.id,
-        node.name,
-        node.npn ?? '',
-        node.email ?? '',
-        node.status.toUpperCase(),
-        node.sourceNode.companyName ?? '',
-        node.sourceNode.compLevel ?? '',
-        node.sourceNode.licensingState ?? '',
-        node.vendorGroup ?? '',
-        node.parentId ?? '',
-        upline?.name ?? '',
-        node.uplineSource ?? '',
-        node.sourceNode.uplineConfidence ?? '',
-        node.metrics.directReports ?? '',
-        node.metrics.descendantCount ?? '',
-        node.metrics.lastSeen ?? '',
-        node.depth,
-        distanceFromSelected,
-        segment ?? '',
+        ...baseValues,
+        ...exportFieldValues,
       ].map(escapeCsvField).join(','),
     );
   });

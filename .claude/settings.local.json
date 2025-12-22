@@ -3,7 +3,8 @@
     "allow": [
       "Bash(npm install)",
       "Bash(npm run dev:*)",
-      "Bash(nul)"
+      "Bash(nul)",
+      "Bash(git grep:*)"
     ],
     "deny": [],
     "ask": []

@@ -873,6 +873,93 @@
   color: var(--accent);
 }
 
+/* Comprehensive Details with Collapsible Sections */
+.visual-hierarchy-inspector__comprehensive {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* Collapsible Section Component */
+.collapsible-section {
+  margin-bottom: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(71, 85, 105, 0.35);
+  background: rgba(9, 12, 20, 0.6);
+  overflow: hidden;
+  transition: border-color 180ms ease;
+}
+
+.visual-hierarchy-page[data-theme='light'] .collapsible-section {
+  background: #ffffff;
+  border-color: rgba(203, 213, 225, 0.6);
+}
+
+.collapsible-section__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease;
+  text-align: left;
+}
+
+.collapsible-section__header:hover {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.collapsible-section__header svg {
+  flex-shrink: 0;
+  transition: transform 200ms ease;
+  color: var(--accent);
+}
+
+.collapsible-section__header svg.rotated {
+  transform: rotate(90deg);
+}
+
+.collapsible-section__header h4 {
+  margin: 0;
+  flex: 1;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.collapsible-section__header .badge {
+  margin-left: auto;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(96, 245, 161, 0.15);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.collapsible-section__content {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 300ms ease, padding 300ms ease;
+}
+
+.collapsible-section__content.is-open {
+  max-height: 2000px;
+  padding: 0 14px 14px;
+}
+
+/* Adjust existing detail grid to work inside collapsible */
+.collapsible-section .visual-hierarchy-inspector__details {
+  margin-top: 0;
+  gap: 6px;
+}
+
 .visual-hierarchy-inspector__empty {
   flex: 1;
   display: flex;

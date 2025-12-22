@@ -70,6 +70,7 @@ const PAGE_SIZE = Number.isNaN(RAW_PAGE_SIZE)
   ? 100
   : Math.min(Math.max(RAW_PAGE_SIZE, 1), 100);
 const MAX_CONTACTS = Number.parseInt(process.env.HL_MAX_CONTACTS || '2000', 10);
+const MAX_OPPORTUNITIES = Number.parseInt(process.env.HL_MAX_OPPORTUNITIES || '5000', 10);
 
 const RATE_LIMIT_DELAY_MS = 200;
 const MAX_RETRIES = 5;
@@ -160,6 +161,7 @@ const buildSyntheticUplineNode = (uplineProducerId) => {
     email: null,
     emailDisplay: null,
     phone: null,
+    source: null,
     npn: uplineProducerId,
     npnRaw: uplineProducerId,
     surelcId: null,
@@ -198,6 +200,7 @@ const buildSyntheticUplineNode = (uplineProducerId) => {
     uplineConfidence: 1,
     children: [],
     customFields: {},
+    opportunity: null,
     isSynthetic: true,
   };
 };
@@ -288,9 +291,11 @@ async function fetchCustomFields() {
 
   const contactFields = items.filter((field) => field.model === 'contact');
 
+  const opportunityFields = items.filter((field) => field.model === 'opportunity');
+
   const idMap = new Map();
 
-  contactFields.forEach((field) => {
+  items.forEach((field) => {
 
     idMap.set(field.id, field);
 
@@ -298,13 +303,249 @@ async function fetchCustomFields() {
 
   return {
 
-    items: contactFields,
+    items,
+
+    contactItems: contactFields,
+
+    opportunityItems: opportunityFields,
 
     byId: idMap,
 
   };
 
 }
+
+
+
+async function fetchAllOpportunities() {
+
+  const initialUrls = [
+
+    `/opportunities/?locationId=${encodeURIComponent(HL_LOCATION_ID)}&limit=${PAGE_SIZE}`,
+
+    `/opportunities/?location_id=${encodeURIComponent(HL_LOCATION_ID)}&limit=${PAGE_SIZE}`,
+
+    `/opportunities/search?locationId=${encodeURIComponent(HL_LOCATION_ID)}&limit=${PAGE_SIZE}`,
+
+    `/opportunities/search?location_id=${encodeURIComponent(HL_LOCATION_ID)}&limit=${PAGE_SIZE}`,
+
+  ];
+
+
+
+  let lastError = null;
+
+  for (const initialUrl of initialUrls) {
+
+    try {
+
+      const opportunities = [];
+
+      let nextUrl = initialUrl;
+
+
+
+      while (nextUrl && opportunities.length < MAX_OPPORTUNITIES) {
+
+        const payload = await fetchWithRetry(nextUrl);
+
+
+
+        const batch = Array.isArray(payload?.opportunities)
+
+          ? payload.opportunities
+
+          : Array.isArray(payload?.items)
+
+            ? payload.items
+
+            : Array.isArray(payload?.data)
+
+              ? payload.data
+
+              : [];
+
+
+
+        if (batch.length) {
+
+          opportunities.push(...batch);
+
+        }
+
+
+
+        const nextPageUrl = payload?.meta?.nextPageUrl;
+
+        nextUrl = nextPageUrl ? nextPageUrl : null;
+
+      }
+
+
+
+      return opportunities;
+
+    } catch (error) {
+
+      lastError = error;
+
+      const status = error?.status;
+
+      if (status === 400 || status === 404 || status === 422) {
+
+        continue;
+
+      }
+
+
+
+      throw error;
+
+    }
+
+  }
+
+
+
+  throw lastError || new Error('Failed to fetch opportunities');
+
+}
+
+
+
+const toEpochMs = (value) => {
+
+  if (!value) return 0;
+
+  const date = value instanceof Date ? value : new Date(value);
+
+  const ms = date.getTime();
+
+  return Number.isNaN(ms) ? 0 : ms;
+
+};
+
+
+
+const extractOpportunityContactId = (opportunity) => {
+
+  const direct = opportunity?.contactId || opportunity?.contact_id || opportunity?.contact || null;
+
+  if (typeof direct === 'string') return direct;
+
+  if (direct && typeof direct === 'object') {
+
+    const nested = direct.id || direct.contactId || direct.contact_id;
+
+    if (typeof nested === 'string') return nested;
+
+  }
+
+  return null;
+
+};
+
+
+
+const buildOpportunitySummary = (opportunity, customFieldsMap) => {
+
+  const custom = {};
+
+
+
+  (opportunity?.customFields || []).forEach((entry) => {
+
+    const field = customFieldsMap.get(entry.id);
+
+    const key = field?.fieldKey || entry.id;
+
+    custom[key] = entry.value;
+
+  });
+
+
+
+  const pipelineId = opportunity?.pipelineId ?? opportunity?.pipeline_id ?? opportunity?.pipeline ?? null;
+
+  const pipelineStageId = opportunity?.pipelineStageId ?? opportunity?.pipeline_stage_id ?? opportunity?.pipelineStage ?? null;
+
+  const monetaryValue = opportunity?.monetaryValue ?? opportunity?.monetary_value ?? opportunity?.value ?? null;
+
+  const assignedTo = opportunity?.assignedTo ?? opportunity?.assigned_to ?? opportunity?.assigned ?? null;
+
+
+
+  return {
+
+    pipelineId: typeof pipelineId === 'string' ? pipelineId : pipelineId ? String(pipelineId) : null,
+
+    pipelineStageId: typeof pipelineStageId === 'string' ? pipelineStageId : pipelineStageId ? String(pipelineStageId) : null,
+
+    monetaryValue,
+
+    assignedTo: typeof assignedTo === 'string' ? assignedTo : assignedTo ? String(assignedTo) : null,
+
+    customFields: custom,
+
+  };
+
+};
+
+
+
+const buildOpportunityIndex = (rawOpportunities, customFieldsMap) => {
+
+  const byContactId = new Map();
+
+
+
+  rawOpportunities.forEach((opportunity) => {
+
+    const contactId = extractOpportunityContactId(opportunity);
+
+    if (!contactId) return;
+
+
+
+    const updatedAt = opportunity?.updatedAt ?? opportunity?.updated_at ?? opportunity?.dateUpdated ?? null;
+
+    const createdAt = opportunity?.createdAt ?? opportunity?.created_at ?? opportunity?.dateAdded ?? null;
+
+    const sortKey = Math.max(toEpochMs(updatedAt), toEpochMs(createdAt));
+
+
+
+    const existing = byContactId.get(contactId);
+
+    if (existing && existing.sortKey >= sortKey) return;
+
+
+
+    byContactId.set(contactId, {
+
+      sortKey,
+
+      summary: buildOpportunitySummary(opportunity, customFieldsMap),
+
+    });
+
+  });
+
+
+
+  const finalIndex = new Map();
+
+  byContactId.forEach((value, key) => {
+
+    finalIndex.set(key, value.summary);
+
+  });
+
+
+
+  return finalIndex;
+
+};
 
 
 
@@ -383,6 +624,7 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
   const surelcIndex = new Map();
   const emailIndex = new Map();
   const uplineGroups = new Map();
+  const opportunitiesByContactId = options?.opportunitiesByContactId || new Map();
 
 
   rawContacts.forEach((contact) => {
@@ -459,6 +701,8 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
       phone: contact.phone || null,
 
+      source: contact.source || null,
+
       npn,
 
       npnRaw,
@@ -523,6 +767,7 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
       uplineConfidence: 0,
       children: [],
       customFields: custom,
+      opportunity: opportunitiesByContactId.get(contact.id) || null,
       isSynthetic: false,
     };
 
@@ -902,6 +1147,10 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
       email: node.emailDisplay,
 
+      phone: node.phone || null,
+
+      source: node.source || null,
+
       companyName: node.companyName || null,
 
       vendorFlags: node.aggregator,
@@ -939,6 +1188,8 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
       flags: node.flags,
 
       issues,
+
+      opportunity: node.opportunity || null,
 
       raw: {
 
@@ -1049,6 +1300,12 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
       : [],
 
+    opportunityCustomFieldDefs: Array.isArray(options?.opportunityCustomFieldItems)
+
+      ? options.opportunityCustomFieldItems
+
+      : [],
+
     stats,
 
     issues,
@@ -1093,21 +1350,30 @@ export default async function handler(req, res) {
 
     ensureConfig();
 
+    const query = req.query || {};
+
+    const body = req.body || {};
+
+    const includeOpportunities = isTruthy(
+
+      query.includeOpportunities ?? query.include_opportunities ?? body.includeOpportunities ?? body.include_opportunities,
+
+    );
 
 
-    const [customFields, contacts] = await Promise.all([
+    const [customFields, contacts, opportunities] = await Promise.all([
 
       fetchCustomFields(),
 
       fetchAllContacts(),
+
+      includeOpportunities ? fetchAllOpportunities() : Promise.resolve([]),
 
     ]);
 
 
 
     // Debug mode: return raw contact data
-
-    const query = req.query || {};
 
     
 
@@ -1203,9 +1469,129 @@ export default async function handler(req, res) {
 
 
 
+    if (query.debug === 'coverage') {
+
+      const isPresent = (value) => {
+
+        if (value === null || value === undefined) return false;
+
+        if (typeof value === 'string') return value.trim().length > 0;
+
+        if (Array.isArray(value)) return value.some((entry) => isPresent(entry));
+
+        if (typeof value === 'object') return Object.keys(value).length > 0;
+
+        return true;
+
+      };
+
+
+
+      const contactKeys = [
+        'contact.source',
+        'contact.upline_highest_stage',
+        'contact.comp_level_link',
+        'contact.custom_comp_level_notes',
+        'contact.phone_number',
+        'contact.onboarding__licensed',
+        'contact.onboarding__npn',
+        'contact.onboarding__licensing_state',
+        'contact.onboarding__upline_email',
+        'contact.onboarding__cluster_applies',
+        'contact.onboarding__equita_profile_created',
+        'contact.onboarding__quility_profile_created',
+        'contact.onboarding__xcel_account_created',
+        'contact.onboarding__xcel_username_email',
+        'contact.onboarding__xcel_temp_password',
+        'contact.xcel_enrollment_date',
+        'contact.xcel_due_date',
+        'contact.xcel_last_touch',
+        'contact.onboarding__xcel_started',
+        'contact.onboarding__xcel_paid',
+        'contact.onboarding__producer_number',
+        'contact.upline_code_equita',
+        'contact.upline_code_quility',
+        'contact.phone_numer',
+      ];
+
+      const opportunityKeys = [
+        'opportunity.pipeline_id',
+        'opportunity.pipeline_stage_id',
+        'opportunity.monetary_value',
+        'opportunity.assigned_to',
+        'opportunity.carrier_app__carrier_name',
+        'opportunity.carrier_app__cluster',
+        'opportunity.carrier_app__eligible',
+        'opportunity.carrier_app__upline_code_received',
+        'opportunity.carrier_app__current_disposition',
+      ];
+
+      const labelByKey = new Map();
+      customFields.items.forEach((field) => {
+        if (field?.fieldKey && field?.name) labelByKey.set(field.fieldKey, field.name);
+      });
+
+      const contactCounts = Object.fromEntries(contactKeys.map((key) => [key, 0]));
+      contacts.forEach((contact) => {
+        const custom = {};
+        (contact.customFields || []).forEach((entry) => {
+          const field = customFields.byId.get(entry.id);
+          const fieldKey = field?.fieldKey || entry.id;
+          custom[fieldKey] = entry.value;
+        });
+
+        contactKeys.forEach((key) => {
+          let value;
+          if (key === 'contact.source') value = contact.source;
+          else if (key === 'contact.phone_number' || key === 'contact.phone_numer') value = contact.phone;
+          else value = custom[key];
+          if (isPresent(value)) contactCounts[key] += 1;
+        });
+      });
+
+      const opportunityCounts = Object.fromEntries(opportunityKeys.map((key) => [key, 0]));
+      opportunities.forEach((opportunity) => {
+        const custom = {};
+        (opportunity?.customFields || []).forEach((entry) => {
+          const field = customFields.byId.get(entry.id);
+          const fieldKey = field?.fieldKey || entry.id;
+          custom[fieldKey] = entry.value;
+        });
+
+        opportunityKeys.forEach((key) => {
+          let value;
+          if (key === 'opportunity.pipeline_id') value = opportunity?.pipelineId ?? opportunity?.pipeline_id ?? opportunity?.pipeline ?? null;
+          else if (key === 'opportunity.pipeline_stage_id') value = opportunity?.pipelineStageId ?? opportunity?.pipeline_stage_id ?? opportunity?.pipelineStage ?? null;
+          else if (key === 'opportunity.monetary_value') value = opportunity?.monetaryValue ?? opportunity?.monetary_value ?? opportunity?.value ?? null;
+          else if (key === 'opportunity.assigned_to') value = opportunity?.assignedTo ?? opportunity?.assigned_to ?? opportunity?.assigned ?? null;
+          else value = custom[key];
+          if (isPresent(value)) opportunityCounts[key] += 1;
+        });
+      });
+
+      return res.status(200).json({
+        totals: {
+          contacts: contacts.length,
+          opportunities: opportunities.length,
+        },
+        labels: Object.fromEntries(Array.from(labelByKey.entries())),
+        coverage: {
+          contact: contactCounts,
+          opportunity: opportunityCounts,
+        },
+      });
+
+    }
+
+
+
     const snapshot = buildSnapshot(contacts, customFields.byId, {
 
-      customFieldItems: customFields.items,
+      customFieldItems: customFields.contactItems,
+
+      opportunityCustomFieldItems: customFields.opportunityItems,
+
+      opportunitiesByContactId: includeOpportunities ? buildOpportunityIndex(opportunities, customFields.byId) : new Map(),
 
     });
 
