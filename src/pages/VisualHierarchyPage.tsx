@@ -250,6 +250,8 @@ const VisualHierarchyPage: React.FC = () => {
     error: null,
     data: null,
   });
+  const [surelcRefreshNonce, setSurelcRefreshNonce] = useState(0);
+  const lastSurelcRefreshNonceRef = useRef(0);
   const clearScopeRootId = useHierarchyStore((state) => state.clearScopeRootId);
 
   const [snapshot, setSnapshot] = useState<GHLSnapshot | null>(null);
@@ -822,6 +824,13 @@ const VisualHierarchyPage: React.FC = () => {
     url.searchParams.set('which', 'AUTO');
     url.searchParams.set('mode', 'both');
 
+    const forceRefresh = surelcRefreshNonce !== lastSurelcRefreshNonceRef.current;
+    if (forceRefresh) {
+      lastSurelcRefreshNonceRef.current = surelcRefreshNonce;
+      url.searchParams.set('nocache', '1');
+      url.searchParams.set('_', String(surelcRefreshNonce));
+    }
+
     fetch(url.toString(), {
       headers: { Accept: 'application/json' },
       signal: controller.signal,
@@ -846,7 +855,7 @@ const VisualHierarchyPage: React.FC = () => {
       });
 
     return () => controller.abort();
-  }, [selectedNode?.id, selectedNode?.npn, selectedNode?.sourceNode?.raw?.surelcId]);
+  }, [selectedNode?.id, selectedNode?.npn, selectedNode?.sourceNode?.raw?.surelcId, surelcRefreshNonce]);
 
   const selectedPagination = useMemo(() => {
     if (!selectedNode) return null;
@@ -1873,6 +1882,14 @@ const VisualHierarchyPage: React.FC = () => {
                           {surelcState.data.hint ? (
                             <div className="surelc-section__hint">{surelcState.data.hint}</div>
                           ) : null}
+                          <button
+                            type="button"
+                            className="surelc-section__refresh"
+                            onClick={() => setSurelcRefreshNonce(Date.now())}
+                            disabled={surelcState.loading}
+                          >
+                            Refresh
+                          </button>
                           {surelcState.data.attempts?.length ? (
                             <div className="surelc-section__attempts">
                               {surelcState.data.attempts.map((attempt) => {
@@ -1897,7 +1914,17 @@ const VisualHierarchyPage: React.FC = () => {
                       ) : surelcViews ? (
                         <>
                           <div className="surelc-section__meta">
-                            <span>Live - {formatDate(surelcState.data?.fetchedAt) ?? surelcState.data?.fetchedAt}</span>
+                            <span className={surelcState.data?.cached ? 'is-muted' : undefined}>
+                              {surelcState.data?.cached ? 'Cached' : 'Live'} - {formatDate(surelcState.data?.fetchedAt) ?? surelcState.data?.fetchedAt}
+                            </span>
+                            <button
+                              type="button"
+                              className="surelc-section__refresh"
+                              onClick={() => setSurelcRefreshNonce(Date.now())}
+                              disabled={surelcState.loading}
+                            >
+                              Refresh
+                            </button>
                           </div>
 
                           {(['QUILITY', 'EQUITA'] as const).map((key) => {
@@ -2005,6 +2032,14 @@ const VisualHierarchyPage: React.FC = () => {
                             <span className={surelcState.data.cached ? 'is-muted' : undefined}>
                               {surelcState.data.cached ? 'Cached' : 'Live'} - {formatDate(surelcState.data.fetchedAt) ?? surelcState.data.fetchedAt}
                             </span>
+                            <button
+                              type="button"
+                              className="surelc-section__refresh"
+                              onClick={() => setSurelcRefreshNonce(Date.now())}
+                              disabled={surelcState.loading}
+                            >
+                              Refresh
+                            </button>
                           </div>
                           <div className="surelc-section__group">
                             <div className="surelc-section__group-header">

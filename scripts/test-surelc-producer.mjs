@@ -74,14 +74,14 @@ function pickCredentials(whichRaw) {
   const quilityAuth = (process.env.SURELC_AUTH_QUILITY || '').trim();
   const generalAuth = (process.env.SURELC_AUTH || '').trim();
 
-  const equitaUser = process.env.VITE_SURELC_USER_EQUITA || process.env.SURELC_USER_EQUITA;
-  const equitaPass = process.env.VITE_SURELC_PASS_EQUITA || process.env.SURELC_PASS_EQUITA;
+  const equitaUser = process.env.SURELC_USER_EQUITA || process.env.VITE_SURELC_USER_EQUITA;
+  const equitaPass = process.env.SURELC_PASS_EQUITA || process.env.VITE_SURELC_PASS_EQUITA;
 
-  const quilityUser = process.env.VITE_SURELC_USER_QUILITY || process.env.SURELC_USER_QUILITY;
-  const quilityPass = process.env.VITE_SURELC_PASS_QUILITY || process.env.SURELC_PASS_QUILITY;
+  const quilityUser = process.env.SURELC_USER_QUILITY || process.env.VITE_SURELC_USER_QUILITY;
+  const quilityPass = process.env.SURELC_PASS_QUILITY || process.env.VITE_SURELC_PASS_QUILITY;
 
-  const generalUser = process.env.VITE_SURELC_USER || process.env.SURELC_USER;
-  const generalPass = process.env.VITE_SURELC_PASS || process.env.SURELC_PASS;
+  const generalUser = process.env.SURELC_USER || process.env.VITE_SURELC_USER;
+  const generalPass = process.env.SURELC_PASS || process.env.VITE_SURELC_PASS;
 
   const options = {
     EQUITA: { user: equitaUser, pass: equitaPass, auth: equitaAuth, label: 'EQUITA' },
@@ -93,12 +93,15 @@ function pickCredentials(whichRaw) {
   const fallback = which === 'GENERAL' ? null : options.GENERAL;
 
   const resolved =
-    preferred.auth
+    // Prefer user/pass when available so password changes take effect even if old SURELC_AUTH_* tokens exist.
+    preferred.user && preferred.pass
       ? preferred
-      : preferred.user && preferred.pass
-      ? preferred
-      : fallback && (fallback.auth || (fallback.user && fallback.pass))
+      : preferred.auth
+        ? preferred
+        : fallback && (fallback.user && fallback.pass)
         ? { ...fallback, label: `${preferred.label} (fallback->GENERAL)` }
+        : fallback && fallback.auth
+          ? { ...fallback, label: `${preferred.label} (fallback->GENERAL)` }
         : preferred;
 
   if (!resolved.auth && (!resolved.user || !resolved.pass)) {

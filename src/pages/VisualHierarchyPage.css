@@ -1003,6 +1003,32 @@
   color: rgba(148, 163, 184, 0.6);
 }
 
+.surelc-section__refresh {
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.35);
+  color: rgba(226, 232, 240, 0.92);
+  cursor: pointer;
+}
+
+.surelc-section__refresh:hover:not(:disabled) {
+  border-color: rgba(96, 245, 161, 0.45);
+  color: var(--accent);
+}
+
+.surelc-section__refresh:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.visual-hierarchy-page[data-theme='light'] .surelc-section__refresh {
+  background: rgba(226, 232, 240, 0.7);
+  color: rgba(15, 23, 42, 0.92);
+}
+
 .surelc-section__loading,
 .surelc-section__empty {
   font-size: 0.86rem;

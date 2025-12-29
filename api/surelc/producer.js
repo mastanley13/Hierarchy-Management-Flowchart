@@ -55,8 +55,20 @@ function loadTestCredentialFallback() {
     const eq = text.match(/AUTH_EQ\s*=\s*['"]([^'"]+)['"]/);
     const qu = text.match(/AUTH_QU\s*=\s*['"]([^'"]+)['"]/);
 
-    if (eq && !process.env.SURELC_AUTH_EQUITA) process.env.SURELC_AUTH_EQUITA = eq[1].trim();
-    if (qu && !process.env.SURELC_AUTH_QUILITY) process.env.SURELC_AUTH_QUILITY = qu[1].trim();
+    // Only use these tokens as a fallback when user/pass is not configured.
+    const hasEquitaUserPass =
+      Boolean((process.env.SURELC_USER_EQUITA || process.env.VITE_SURELC_USER_EQUITA || process.env.VITE_SURELC_USER) &&
+      (process.env.SURELC_PASS_EQUITA || process.env.VITE_SURELC_PASS_EQUITA || process.env.VITE_SURELC_PASS));
+    const hasQuilityUserPass =
+      Boolean((process.env.SURELC_USER_QUILITY || process.env.VITE_SURELC_USER_QUILITY) &&
+      (process.env.SURELC_PASS_QUILITY || process.env.VITE_SURELC_PASS_QUILITY));
+
+    if (eq && !hasEquitaUserPass && !process.env.SURELC_AUTH_EQUITA) {
+      process.env.SURELC_AUTH_EQUITA = eq[1].trim();
+    }
+    if (qu && !hasQuilityUserPass && !process.env.SURELC_AUTH_QUILITY) {
+      process.env.SURELC_AUTH_QUILITY = qu[1].trim();
+    }
   } catch {
     // noop: only a dev convenience
   }
@@ -116,10 +128,11 @@ function resolveCredentialOrder(whichRaw) {
   const { equita, quility, general } = getCredentialOptions();
 
   const asToken = (entry) =>
-    entry.token
-      ? { ...entry, token: entry.token }
-      : entry.user && entry.pass
-        ? { ...entry, token: basicAuthHeader(entry.user, entry.pass) }
+    // Prefer user/pass so password changes take effect even if old SURELC_AUTH_* tokens exist.
+    entry.user && entry.pass
+      ? { ...entry, token: basicAuthHeader(entry.user, entry.pass) }
+      : entry.token
+        ? { ...entry, token: entry.token }
         : null;
 
   const tokens = {
@@ -211,6 +224,13 @@ async function buildView(baseUrl, cred, identifiers) {
           ? 'ACCESS_DENIED'
           : 'FAILED';
 
+    const blockedHint =
+      lookupClass.state === 'blocked' && lookupClass.status === 401
+        ? 'SureLC rejected these credentials. Verify the username/password env vars and restart the dev server so the backend picks up the change.'
+        : lookupClass.state === 'blocked' && lookupClass.status === 403
+          ? 'This usually means the producer is outside your SureLC account scope (firm/subscription/permissions).'
+          : undefined;
+
     return {
       ok: false,
       which: cred.label,
@@ -219,15 +239,15 @@ async function buildView(baseUrl, cred, identifiers) {
       error:
         errorCode === 'NOT_FOUND'
           ? 'Producer not found in SureLC for the provided identifier.'
-          : errorCode === 'ACCESS_DENIED'
-            ? 'Access denied in SureLC for this producer.'
+        : errorCode === 'ACCESS_DENIED'
+            ? lookupClass.status === 401
+              ? 'SureLC rejected the configured credentials for this account.'
+              : 'Access denied in SureLC for this producer.'
             : 'SureLC request failed.',
       identifiers: { npn: identifiers.npn || null, producerId: producerResolved },
       fetchedAt: new Date().toISOString(),
       hint:
-        errorCode === 'ACCESS_DENIED'
-          ? 'This usually means the producer is outside your SureLC account scope (firm/subscription/permissions).'
-          : undefined,
+        errorCode === 'ACCESS_DENIED' ? blockedHint : undefined,
       endpointsMeta: Object.fromEntries(
         Object.entries(endpoints).map(([key, value]) => [
           key,
@@ -310,6 +330,18 @@ function redactPII(value) {
     }
   }
   return out;
+}
+
+function isInvalidCredential401(view) {
+  if (!view || typeof view !== 'object') return false;
+  if (view.errorCode !== 'ACCESS_DENIED') return false;
+  const meta = view.endpointsMeta || {};
+  const statuses = [
+    meta.producerByNpn?.status,
+    meta.producerById?.status,
+    meta.relationship?.status,
+  ].filter((s) => typeof s === 'number');
+  return statuses.includes(401);
 }
 
 async function surelcGet(baseUrl, pathname, token) {
@@ -699,6 +731,8 @@ export default async function handler(req, res) {
     const producerId = normalizeDigits(producerIdRaw);
     const which = req.query?.which || 'AUTO';
     const mode = String(req.query?.mode || req.query?.view || 'single').toLowerCase();
+    const nocacheRaw = String(req.query?.nocache ?? req.query?.noCache ?? req.query?.refresh ?? '').toLowerCase();
+    const noCache = nocacheRaw === '1' || nocacheRaw === 'true' || nocacheRaw === 'yes';
 
     if (!npn && !producerId) {
       res.statusCode = 400;
@@ -714,21 +748,23 @@ export default async function handler(req, res) {
       mode,
     });
     const now = Date.now();
-    const cached = cache.get(cacheKey);
-    if (cached && cached.expiresAt > now) {
-      res.statusCode = 200;
-      res.setHeader('Content-Type', 'application/json');
-      res.end(JSON.stringify({ ...cached.value, cached: true }));
-      return;
+    if (!noCache) {
+      const cached = cache.get(cacheKey);
+      if (cached && cached.expiresAt > now) {
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ ...cached.value, cached: true }));
+        return;
+      }
     }
 
     if (mode === 'both') {
       const { equita, quility } = getCredentialOptions();
       const asToken = (entry) =>
-        entry.token
-          ? { ...entry, token: entry.token }
-          : entry.user && entry.pass
-            ? { ...entry, token: basicAuthHeader(entry.user, entry.pass) }
+        entry.user && entry.pass
+          ? { ...entry, token: basicAuthHeader(entry.user, entry.pass) }
+          : entry.token
+            ? { ...entry, token: entry.token }
             : null;
       const equitaCred = asToken(equita) || { ...equita, token: null };
       const quilityCred = asToken(quility) || { ...quility, token: null };
@@ -753,7 +789,11 @@ export default async function handler(req, res) {
         },
       };
 
-      cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value: payload });
+      // Avoid caching invalid-credentials responses (401) so credential fixes take effect immediately in dev.
+      const cacheable = !isInvalidCredential401(quilityView) && !isInvalidCredential401(equitaView);
+      if (cacheable) {
+        cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value: payload });
+      }
 
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
@@ -858,11 +898,15 @@ export default async function handler(req, res) {
       attempts,
       fetchedAt: new Date().toISOString(),
       hint: hadAuthBlocked
-        ? 'This usually means the producer is outside your SureLC account scope (firm/subscription/permissions).'
+        ? 'This can mean invalid credentials or the producer is outside your SureLC account scope (firm/subscription/permissions).'
         : undefined,
     };
 
-    cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value: failurePayload });
+    // Avoid caching invalid-credentials failures (401) so env fixes take effect immediately in dev.
+    const failureHas401 = attempts.some((a) => (a.producerByNpn?.status === 401) || (a.producerById?.status === 401));
+    if (!failureHas401) {
+      cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value: failurePayload });
+    }
 
     res.statusCode = 200;
     res.setHeader('Content-Type', 'application/json');
