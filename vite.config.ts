@@ -42,6 +42,39 @@ export default defineConfig({
             res.end(JSON.stringify({ error: 'Dev snapshot failed', details: String(err?.message || err) }));
           }
         });
+
+        // Dev-only middleware for serverless SureLC contact fetcher (prevents /api proxy rewrite)
+        server.middlewares.use('/api/surelc/producer', async (req, res) => {
+          try {
+            const mod = await import('./api/surelc/producer.js');
+            const handler = (mod as any).default || mod;
+
+            const r = res as any;
+            if (typeof r.status !== 'function') {
+              r.status = function (code: number) {
+                this.statusCode = code;
+                return this;
+              };
+            }
+            if (typeof r.json !== 'function') {
+              r.json = function (payload: any) {
+                try { this.setHeader('Content-Type', 'application/json'); } catch {}
+                this.end(JSON.stringify(payload));
+                return this;
+              };
+            }
+            try {
+              const u = new URL(req.url!, 'http://localhost');
+              (req as any).query = Object.fromEntries(u.searchParams.entries());
+            } catch {}
+
+            await handler(req as any, r);
+          } catch (err: any) {
+            res.statusCode = 500;
+            try { res.setHeader('Content-Type', 'application/json'); } catch {}
+            res.end(JSON.stringify({ error: 'Dev SureLC handler failed', details: String(err?.message || err) }));
+          }
+        });
       }
     }
   ],

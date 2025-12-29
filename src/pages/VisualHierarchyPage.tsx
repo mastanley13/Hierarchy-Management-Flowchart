@@ -46,6 +46,104 @@ const SCOPE_STORAGE_KEY = 'visual-hierarchy-scope-root';
 const CHILDREN_PAGE_SIZE = 8;
 const SURELC_DEMO_LINK_ENABLED = false;
 
+type SurelcEndpointResult = {
+  ok: boolean;
+  status: number;
+  statusText: string;
+  url: string;
+  body: unknown;
+};
+
+type SurelcProducerPayload = {
+  ok: boolean;
+  cached: boolean;
+  whichUsed: string;
+  identifiers: { npn: string | null; producerId: string | null };
+  fetchedAt: string;
+  errorCode?: 'NOT_FOUND' | 'ACCESS_DENIED' | 'FAILED';
+  error?: string;
+  details?: string;
+  hint?: string;
+  attemptedCredentials?: string[];
+  attempts?: Array<{
+    which: string;
+    producerByNpn: { status: number; ok: boolean } | null;
+    producerById: { status: number; ok: boolean } | null;
+    relationship: { status: number; ok: boolean } | null;
+  }>;
+  summary?: {
+    producer?: {
+      recordType: string | null;
+      title: string | null;
+      companyType: string | null;
+      entityType: string | null;
+      createdDate: string | null;
+    };
+    relationship?: {
+      gaId: string | number | null;
+      branchCode: string | null;
+      upline: string | null;
+      status: string | null;
+      subscribed: string | boolean | null;
+      unsubscriptionDate: string | null;
+      addedOn: string | null;
+      errors: string | null;
+      warnings: string | null;
+    };
+    statuses?: {
+      producer: string | null;
+      bga: string | null;
+      carrier: string | null;
+    };
+    licenses?: {
+      total: number;
+      byStatus: Array<{ status: string; count: number }>;
+      soonestExpiration: string | null;
+      residentStates: string[];
+    };
+    appointments?: {
+      total: number;
+      byStatus: Array<{ status: string; count: number }>;
+      appointedCarriers: number;
+      terminatedCarriers: number;
+      byCarrierTop: Array<{
+        carrierId: string;
+        total: number;
+        byStatus: Array<{ status: string; count: number }>;
+        statesTop: Array<{ state: string; count: number }>;
+      }>;
+    };
+    contracts?: {
+      total: number;
+      byStatus: Array<{ status: string; count: number }>;
+      activeCarriers: number;
+      byCarrierTop: Array<{
+        carrierId: string;
+        total: number;
+        byStatus: Array<{ status: string; count: number }>;
+      }>;
+    };
+  };
+  endpointsMeta?: Record<
+    string,
+    | {
+        ok: boolean;
+        status: number;
+        statusText: string;
+        url: string;
+        shape: { type: string; count?: number; keys?: number };
+      }
+    | null
+  >;
+  endpoints: Record<string, SurelcEndpointResult | undefined>;
+};
+
+type SurelcFetchState = {
+  loading: boolean;
+  error: string | null;
+  data: SurelcProducerPayload | null;
+};
+
 type ExportMode =
   | 'viewport-svg'
   | 'viewport-png'
@@ -118,6 +216,11 @@ const VisualHierarchyPage: React.FC = () => {
   const setTheme = useHierarchyStore((state) => state.setTheme);
   const scopeRootId = useScopeRootId();
   const setScopeRootId = useHierarchyStore((state) => state.setScopeRootId);
+  const [surelcState, setSurelcState] = useState<SurelcFetchState>({
+    loading: false,
+    error: null,
+    data: null,
+  });
   const clearScopeRootId = useHierarchyStore((state) => state.clearScopeRootId);
 
   const [snapshot, setSnapshot] = useState<GHLSnapshot | null>(null);
@@ -664,6 +767,60 @@ const VisualHierarchyPage: React.FC = () => {
     };
   }, [selectedNode]);
 
+  useEffect(() => {
+    if (!selectedNode) {
+      setSurelcState({ loading: false, error: null, data: null });
+      return;
+    }
+
+    const npn = selectedNode.npn ?? '';
+    const rawSurelcId = selectedNode.sourceNode?.raw?.surelcId ?? '';
+    const producerId = String(rawSurelcId || '').replace(/\D+/g, '');
+
+    if (!npn && !producerId) {
+      setSurelcState({ loading: false, error: null, data: null });
+      return;
+    }
+
+    const controller = new AbortController();
+    setSurelcState((prev) => ({ ...prev, loading: true, error: null }));
+
+    const url = new URL('/api/surelc/producer', window.location.origin);
+    if (npn) url.searchParams.set('npn', npn);
+    if (producerId) url.searchParams.set('producerId', producerId);
+    const which = selectedNode.vendorGroup === 'equita'
+      ? 'EQUITA'
+      : selectedNode.vendorGroup === 'quility'
+        ? 'QUILITY'
+        : 'AUTO';
+    url.searchParams.set('which', which);
+
+    fetch(url.toString(), {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        const text = await res.text();
+        let json: any = null;
+        try {
+          json = text ? JSON.parse(text) : null;
+        } catch {
+          json = { error: text || `SureLC request failed (${res.status})` };
+        }
+        if (!res.ok) {
+          const message = json?.error && json?.details ? `${json.error}: ${json.details}` : (json?.error || json?.details);
+          throw new Error(message || `SureLC request failed (${res.status})`);
+        }
+        setSurelcState({ loading: false, error: null, data: json as SurelcProducerPayload });
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        setSurelcState({ loading: false, error: String(err?.message || err), data: null });
+      });
+
+    return () => controller.abort();
+  }, [selectedNode?.id, selectedNode?.npn, selectedNode?.sourceNode?.raw?.surelcId]);
+
   const selectedPagination = useMemo(() => {
     if (!selectedNode) return null;
     const childCount = selectedNode.childrenIds.length;
@@ -690,6 +847,73 @@ const VisualHierarchyPage: React.FC = () => {
       showAll: false,
     };
   }, [selectedNode, childPageIndex, showAllChildren]);
+
+  const surelcBadge = useMemo(() => {
+    if (surelcState.loading) return '...';
+    if (surelcState.error) return '!';
+    if (surelcState.data && surelcState.data.ok === false) return '!';
+    const endpoints = surelcState.data?.endpoints || {};
+    const okCount = Object.values(endpoints).filter((r) => r?.ok).length;
+    return okCount || undefined;
+  }, [surelcState.data, surelcState.error, surelcState.loading]);
+
+  const surelcRows = useMemo((): {
+    overview: FieldRow[];
+    appointments: FieldRow[];
+    licenses: FieldRow[];
+    contracts: FieldRow[];
+  } => {
+    const data = surelcState.data?.summary;
+    const relationship = data?.relationship;
+    const producer = data?.producer;
+    const statuses = data?.statuses;
+    const licenses = data?.licenses;
+    const appointments = data?.appointments;
+    const contracts = data?.contracts;
+
+    const overview: FieldRow[] = [
+      { label: 'SureLC Producer ID', value: surelcState.data?.identifiers.producerId ?? '-' },
+      { label: 'SureLC NPN', value: surelcState.data?.identifiers.npn ?? selectedNode?.npn ?? '-' },
+      { label: 'Upline (SureLC)', value: relationship?.upline ?? '-' },
+      { label: 'Comp Level / Branch Code', value: relationship?.branchCode ?? producer?.title ?? '-' },
+      { label: 'Producer Status', value: statuses?.producer ?? relationship?.status ?? '-' },
+      { label: 'BGA Status', value: statuses?.bga ?? '-' },
+      { label: 'Carrier Status', value: statuses?.carrier ?? '-' },
+      { label: 'GA ID', value: relationship?.gaId ?? '-' },
+      { label: 'Relationship Added', value: relationship?.addedOn ?? '-' },
+      { label: 'Unsubscribed On', value: relationship?.unsubscriptionDate ?? '-' },
+      { label: 'Errors', value: relationship?.errors ?? '-' },
+      { label: 'Warnings', value: relationship?.warnings ?? '-' },
+      { label: 'Record Type', value: producer?.recordType ?? '-' },
+      { label: 'Company Type', value: producer?.companyType ?? '-' },
+      { label: 'Entity Type', value: producer?.entityType ?? '-' },
+      { label: 'Created', value: producer?.createdDate ?? '-' },
+    ];
+
+    const licenseRows: FieldRow[] = [
+      { label: 'Total Licenses', value: licenses?.total ?? 0 },
+      { label: 'Soonest Expiration', value: licenses?.soonestExpiration ?? '-' },
+      { label: 'Resident States', value: licenses?.residentStates?.length ? licenses.residentStates.join(', ') : '-' },
+      { label: 'By Status', value: licenses?.byStatus?.length ? licenses.byStatus.map((s) => `${s.status}: ${s.count}`).join(' • ') : '-' },
+    ];
+
+    const apptRows: FieldRow[] = [
+      { label: 'Total Appointments', value: appointments?.total ?? 0 },
+      { label: 'Appointed Carriers', value: appointments?.appointedCarriers ?? 0 },
+      { label: 'Terminated Carriers', value: appointments?.terminatedCarriers ?? 0 },
+      { label: 'By Status', value: appointments?.byStatus?.length ? appointments.byStatus.map((s) => `${s.status}: ${s.count}`).join(' • ') : '-' },
+      { label: 'Top Carriers', value: appointments?.byCarrierTop?.length ? appointments.byCarrierTop.slice(0, 5).map((c) => `#${c.carrierId} (${c.total})`).join(' • ') : '-' },
+    ];
+
+    const contractRows: FieldRow[] = [
+      { label: 'Total Contracts', value: contracts?.total ?? 0 },
+      { label: 'Active Carriers', value: contracts?.activeCarriers ?? 0 },
+      { label: 'By Status', value: contracts?.byStatus?.length ? contracts.byStatus.map((s) => `${s.status}: ${s.count}`).join(' • ') : '-' },
+      { label: 'Top Carriers', value: contracts?.byCarrierTop?.length ? contracts.byCarrierTop.slice(0, 5).map((c) => `#${c.carrierId} (${c.total})`).join(' • ') : '-' },
+    ];
+
+    return { overview, appointments: apptRows, licenses: licenseRows, contracts: contractRows };
+  }, [selectedNode?.npn, surelcState.data?.identifiers, surelcState.data?.summary]);
 
   const handleToggleNode = useCallback(
     (id: string) => {
@@ -1079,7 +1303,7 @@ const VisualHierarchyPage: React.FC = () => {
                 SureLC Demo
               </button>
             )}
-            <h1>Visual Upline Hierarchy</h1>
+            <h1>Hierarchy System</h1>
             <div className="visual-hierarchy-export-dropdown" ref={exportDropdownRef}>
               <button
                 type="button"
@@ -1424,6 +1648,118 @@ const VisualHierarchyPage: React.FC = () => {
                           )}
                         </div>
                       ))}
+                    </div>
+                  </CollapsibleSection>
+
+                  <CollapsibleSection title="SureLC" badge={surelcBadge}>
+                    <div className="surelc-section">
+                      {!selectedNode?.npn && !selectedNode?.sourceNode?.raw?.surelcId ? (
+                        <div className="surelc-section__empty">No NPN / SureLC ID on file for this contact.</div>
+                      ) : surelcState.loading ? (
+                        <div className="surelc-section__loading">Loading SureLC data...</div>
+                      ) : surelcState.error ? (
+                        <div className="surelc-section__error">{surelcState.error}</div>
+                      ) : surelcState.data && surelcState.data.ok === false ? (
+                        <div className="surelc-section__failure">
+                          <div className="surelc-section__error">{surelcState.data.error || 'SureLC unavailable'}</div>
+                          {surelcState.data.hint ? (
+                            <div className="surelc-section__hint">{surelcState.data.hint}</div>
+                          ) : null}
+                          {surelcState.data.attempts?.length ? (
+                            <div className="surelc-section__attempts">
+                              {surelcState.data.attempts.map((attempt) => {
+                                const status =
+                                  attempt.producerByNpn?.status ?? attempt.producerById?.status ?? attempt.relationship?.status ?? null;
+                                return (
+                                  <div key={attempt.which} className="surelc-section__attempt">
+                                    <span className="surelc-section__attempt-which">{attempt.which}</span>
+                                    <span className="surelc-section__attempt-status">{status ?? '-'}</span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          ) : null}
+                          {surelcState.data.details ? (
+                            <div className="surelc-section__details">{surelcState.data.details}</div>
+                          ) : null}
+                        </div>
+                      ) : surelcState.data ? (
+                        <>
+                          <div className="surelc-section__meta">
+                            <span>Auth: {surelcState.data.whichUsed}</span>
+                            <span>Producer ID: {surelcState.data.identifiers.producerId ?? '-'}</span>
+                            <span className={surelcState.data.cached ? 'is-muted' : undefined}>
+                              {surelcState.data.cached ? 'Cached' : 'Live'} - {formatDate(surelcState.data.fetchedAt) ?? surelcState.data.fetchedAt}
+                            </span>
+                          </div>
+                          <div className="surelc-section__group">
+                            <div className="surelc-section__group-header">
+                              <span className="surelc-section__group-title">Overview</span>
+                              <span className="surelc-section__group-badge">{surelcRows.overview.length}</span>
+                            </div>
+                            <div className="visual-hierarchy-inspector__details">
+                              {surelcRows.overview.map((field) => (
+                                <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                  <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                  <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                    {field.value}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="surelc-section__group">
+                            <div className="surelc-section__group-header">
+                              <span className="surelc-section__group-title">Licenses</span>
+                            </div>
+                            <div className="visual-hierarchy-inspector__details">
+                              {surelcRows.licenses.map((field) => (
+                                <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                  <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                  <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                    {field.value}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="surelc-section__group">
+                            <div className="surelc-section__group-header">
+                              <span className="surelc-section__group-title">Appointments</span>
+                            </div>
+                            <div className="visual-hierarchy-inspector__details">
+                              {surelcRows.appointments.map((field) => (
+                                <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                  <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                  <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                    {field.value}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="surelc-section__group">
+                            <div className="surelc-section__group-header">
+                              <span className="surelc-section__group-title">Contracts</span>
+                            </div>
+                            <div className="visual-hierarchy-inspector__details">
+                              {surelcRows.contracts.map((field) => (
+                                <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                  <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                  <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                    {field.value}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="surelc-section__empty">No SureLC data loaded.</div>
+                      )}
                     </div>
                   </CollapsibleSection>
 

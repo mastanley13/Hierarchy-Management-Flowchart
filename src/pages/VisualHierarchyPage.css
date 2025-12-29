@@ -960,6 +960,204 @@
   gap: 6px;
 }
 
+.surelc-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.surelc-section__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  font-size: 0.78rem;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.surelc-section__meta span.is-muted {
+  color: rgba(148, 163, 184, 0.6);
+}
+
+.surelc-section__loading,
+.surelc-section__empty {
+  font-size: 0.86rem;
+  color: rgba(148, 163, 184, 0.8);
+  padding: 6px 2px;
+}
+
+.surelc-section__error {
+  font-size: 0.86rem;
+  color: rgba(248, 113, 113, 0.95);
+  padding: 6px 2px;
+}
+
+.surelc-section__failure {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 6px 2px;
+}
+
+.surelc-section__hint,
+.surelc-section__details {
+  font-size: 0.8rem;
+  color: rgba(148, 163, 184, 0.85);
+}
+
+.surelc-section__attempts {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 10px;
+  align-items: center;
+  max-width: 360px;
+}
+
+.surelc-section__attempt {
+  display: contents;
+}
+
+.surelc-section__attempt-which {
+  font-size: 0.8rem;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.visual-hierarchy-page[data-theme='light'] .surelc-section__attempt-which {
+  color: rgba(15, 23, 42, 0.92);
+}
+
+.surelc-section__attempt-status {
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  color: rgba(148, 163, 184, 0.95);
+}
+
+.surelc-section__endpoints {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.surelc-section__group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.surelc-section__group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 2px 0;
+}
+
+.surelc-section__group-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: rgba(226, 232, 240, 0.92);
+}
+
+.visual-hierarchy-page[data-theme='light'] .surelc-section__group-title {
+  color: rgba(15, 23, 42, 0.92);
+}
+
+.surelc-section__group-badge {
+  font-size: 0.72rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(125, 211, 252, 0.12);
+  color: rgba(125, 211, 252, 0.95);
+  border: 1px solid rgba(125, 211, 252, 0.22);
+}
+
+.surelc-section__endpoint {
+  border-radius: 10px;
+  border: 1px solid rgba(71, 85, 105, 0.35);
+  background: rgba(9, 12, 20, 0.75);
+  overflow: hidden;
+}
+
+.visual-hierarchy-page[data-theme='light'] .surelc-section__endpoint {
+  background: #ffffff;
+  border-color: rgba(203, 213, 225, 0.65);
+}
+
+.surelc-section__endpoint-summary {
+  cursor: pointer;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  list-style: none;
+}
+
+.surelc-section__endpoint summary::-webkit-details-marker {
+  display: none;
+}
+
+.surelc-section__endpoint-name {
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  flex: 1;
+}
+
+.surelc-section__endpoint-status {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  color: rgba(148, 163, 184, 0.9);
+}
+
+.surelc-section__endpoint-status.is-ok {
+  border-color: rgba(96, 245, 161, 0.4);
+  color: rgba(96, 245, 161, 0.95);
+  background: rgba(96, 245, 161, 0.08);
+}
+
+.surelc-section__endpoint-status.is-bad {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: rgba(248, 113, 113, 0.95);
+  background: rgba(248, 113, 113, 0.07);
+}
+
+.surelc-section__endpoint-shape {
+  font-size: 0.74rem;
+  color: rgba(148, 163, 184, 0.75);
+}
+
+.surelc-section__endpoint-body {
+  margin: 0;
+  padding: 10px 12px 12px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 0.76rem;
+  line-height: 1.35;
+  color: rgba(226, 232, 240, 0.9);
+  background: rgba(2, 6, 23, 0.55);
+  border-top: 1px solid rgba(71, 85, 105, 0.25);
+  white-space: pre;
+}
+
+.surelc-section__endpoint-placeholder {
+  padding: 10px 12px 12px;
+  font-size: 0.8rem;
+  color: rgba(148, 163, 184, 0.8);
+  border-top: 1px solid rgba(71, 85, 105, 0.25);
+}
+
+.visual-hierarchy-page[data-theme='light'] .surelc-section__endpoint-body {
+  color: rgba(15, 23, 42, 0.9);
+  background: rgba(226, 232, 240, 0.45);
+}
+
 .visual-hierarchy-inspector__empty {
   flex: 1;
   display: flex;
