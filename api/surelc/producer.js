@@ -541,7 +541,7 @@ export default async function handler(req, res) {
         const status = primaryLookup?.status;
         const authBlocked = status === 401 || status === 403;
         if (!anyOk && authBlocked) {
-          lastError = new Error(`${cand.label} blocked with HTTP ${status}`);
+          lastError = new Error(`${cand.label} blocked`);
           continue;
         }
 

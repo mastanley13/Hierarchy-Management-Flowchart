@@ -1670,17 +1670,20 @@ const VisualHierarchyPage: React.FC = () => {
                               {surelcState.data.attempts.map((attempt) => {
                                 const status =
                                   attempt.producerByNpn?.status ?? attempt.producerById?.status ?? attempt.relationship?.status ?? null;
+                                const blocked = status === 401 || status === 403;
+                                const label =
+                                  status === 404 ? 'not found'
+                                  : blocked ? 'blocked'
+                                  : status ? `failed (${status})`
+                                  : 'failed';
                                 return (
                                   <div key={attempt.which} className="surelc-section__attempt">
                                     <span className="surelc-section__attempt-which">{attempt.which}</span>
-                                    <span className="surelc-section__attempt-status">{status ?? '-'}</span>
+                                    <span className="surelc-section__attempt-status">{label}</span>
                                   </div>
                                 );
                               })}
                             </div>
-                          ) : null}
-                          {surelcState.data.details ? (
-                            <div className="surelc-section__details">{surelcState.data.details}</div>
                           ) : null}
                         </div>
                       ) : surelcState.data ? (
