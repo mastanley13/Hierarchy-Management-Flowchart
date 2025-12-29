@@ -37,6 +37,15 @@ function loadEnvFile(envPath = path.join(process.cwd(), '.env')) {
   try {
     if (!fs.existsSync(envPath)) return;
     const text = fs.readFileSync(envPath, 'utf8');
+    // Support JS snippets like: var AUTH_EQ = 'Basic ...';
+    // This lets you point --env at test.credentials.md without copying secrets into .env.
+    try {
+      const eq = text.match(/AUTH_EQ\s*=\s*['"]([^'"]+)['"]/);
+      const qu = text.match(/AUTH_QU\s*=\s*['"]([^'"]+)['"]/);
+      if (eq && !process.env.SURELC_AUTH_EQUITA) process.env.SURELC_AUTH_EQUITA = eq[1].trim();
+      if (qu && !process.env.SURELC_AUTH_QUILITY) process.env.SURELC_AUTH_QUILITY = qu[1].trim();
+    } catch {}
+
     for (const rawLine of text.split(/\r?\n/)) {
       const line = rawLine.trim();
       if (!line || line.startsWith('#')) continue;
@@ -61,6 +70,10 @@ function basicAuthHeader(user, pass) {
 function pickCredentials(whichRaw) {
   const which = String(whichRaw || process.env.SURELC_WHICH || 'EQUITA').toUpperCase();
 
+  const equitaAuth = (process.env.SURELC_AUTH_EQUITA || '').trim();
+  const quilityAuth = (process.env.SURELC_AUTH_QUILITY || '').trim();
+  const generalAuth = (process.env.SURELC_AUTH || '').trim();
+
   const equitaUser = process.env.VITE_SURELC_USER_EQUITA || process.env.SURELC_USER_EQUITA;
   const equitaPass = process.env.VITE_SURELC_PASS_EQUITA || process.env.SURELC_PASS_EQUITA;
 
@@ -71,22 +84,24 @@ function pickCredentials(whichRaw) {
   const generalPass = process.env.VITE_SURELC_PASS || process.env.SURELC_PASS;
 
   const options = {
-    EQUITA: { user: equitaUser, pass: equitaPass, label: 'EQUITA' },
-    QUILITY: { user: quilityUser, pass: quilityPass, label: 'QUILITY' },
-    GENERAL: { user: generalUser, pass: generalPass, label: 'GENERAL' },
+    EQUITA: { user: equitaUser, pass: equitaPass, auth: equitaAuth, label: 'EQUITA' },
+    QUILITY: { user: quilityUser, pass: quilityPass, auth: quilityAuth, label: 'QUILITY' },
+    GENERAL: { user: generalUser, pass: generalPass, auth: generalAuth, label: 'GENERAL' },
   };
 
   const preferred = options[which] || options.EQUITA;
   const fallback = which === 'GENERAL' ? null : options.GENERAL;
 
   const resolved =
-    preferred.user && preferred.pass
+    preferred.auth
       ? preferred
-      : fallback && fallback.user && fallback.pass
+      : preferred.user && preferred.pass
+      ? preferred
+      : fallback && (fallback.auth || (fallback.user && fallback.pass))
         ? { ...fallback, label: `${preferred.label} (fallback->GENERAL)` }
         : preferred;
 
-  if (!resolved.user || !resolved.pass) {
+  if (!resolved.auth && (!resolved.user || !resolved.pass)) {
     throw new Error(
       `Missing SureLC credentials. Set VITE_SURELC_USER_*/VITE_SURELC_PASS_* in .env, or pass env vars directly.`,
     );
@@ -261,7 +276,7 @@ async function main() {
   loadEnvFile(args.env && args.env !== true ? String(args.env) : undefined);
 
   const creds = pickCredentials(args.which);
-  const token = basicAuthHeader(creds.user, creds.pass);
+  const token = creds.auth ? creds.auth : basicAuthHeader(creds.user, creds.pass);
 
   const npn = args.npn && args.npn !== true ? String(args.npn).replace(/\D+/g, '') : (process.env.TEST_NPN || '').replace(/\D+/g, '');
   const producerIdArg = args.producerId && args.producerId !== true ? String(args.producerId).replace(/\D+/g, '') : '';

@@ -45,7 +45,25 @@ function loadEnvFallback() {
   }
 }
 
+function loadTestCredentialFallback() {
+  try {
+    const credPath = path.join(process.cwd(), 'test.credentials.md');
+    if (!fs.existsSync(credPath)) return;
+    const text = fs.readFileSync(credPath, 'utf8');
+
+    // Support JS snippets like: var AUTH_EQ = 'Basic ...';
+    const eq = text.match(/AUTH_EQ\s*=\s*['"]([^'"]+)['"]/);
+    const qu = text.match(/AUTH_QU\s*=\s*['"]([^'"]+)['"]/);
+
+    if (eq && !process.env.SURELC_AUTH_EQUITA) process.env.SURELC_AUTH_EQUITA = eq[1].trim();
+    if (qu && !process.env.SURELC_AUTH_QUILITY) process.env.SURELC_AUTH_QUILITY = qu[1].trim();
+  } catch {
+    // noop: only a dev convenience
+  }
+}
+
 loadEnvFallback();
+loadTestCredentialFallback();
 
 const normalizeDigits = (value) =>
   typeof value === 'string'
@@ -73,16 +91,19 @@ function getCredentialOptions() {
 
   const equita = {
     label: 'EQUITA',
+    token: read('SURELC_AUTH_EQUITA', ''),
     user: read('SURELC_USER_EQUITA', 'VITE_SURELC_USER_EQUITA'),
     pass: read('SURELC_PASS_EQUITA', 'VITE_SURELC_PASS_EQUITA'),
   };
   const quility = {
     label: 'QUILITY',
+    token: read('SURELC_AUTH_QUILITY', ''),
     user: read('SURELC_USER_QUILITY', 'VITE_SURELC_USER_QUILITY'),
     pass: read('SURELC_PASS_QUILITY', 'VITE_SURELC_PASS_QUILITY'),
   };
   const general = {
     label: 'GENERAL',
+    token: read('SURELC_AUTH', ''),
     user: read('SURELC_USER', 'VITE_SURELC_USER'),
     pass: read('SURELC_PASS', 'VITE_SURELC_PASS'),
   };
@@ -95,7 +116,11 @@ function resolveCredentialOrder(whichRaw) {
   const { equita, quility, general } = getCredentialOptions();
 
   const asToken = (entry) =>
-    entry.user && entry.pass ? { ...entry, token: basicAuthHeader(entry.user, entry.pass) } : null;
+    entry.token
+      ? { ...entry, token: entry.token }
+      : entry.user && entry.pass
+        ? { ...entry, token: basicAuthHeader(entry.user, entry.pass) }
+        : null;
 
   const tokens = {
     EQUITA: asToken(equita),
@@ -119,6 +144,109 @@ function resolveCredentialOrder(whichRaw) {
     );
   }
   return resolved;
+}
+
+function classifyLookupStatus(endpoints) {
+  const lookup = endpoints?.producerByNpn || endpoints?.producerById || null;
+  const status = lookup?.status ?? null;
+  if (status === 200) return { state: 'ok', status };
+  if (status === 404) return { state: 'not_found', status };
+  if (status === 401 || status === 403) return { state: 'blocked', status };
+  if (status) return { state: 'failed', status };
+  return { state: 'failed', status: null };
+}
+
+async function buildView(baseUrl, cred, identifiers) {
+  if (!cred?.token) {
+    return {
+      ok: false,
+      which: cred?.label || 'UNKNOWN',
+      available: false,
+      errorCode: 'MISSING_CREDENTIALS',
+      error: 'Credentials not configured for this view.',
+      identifiers,
+      fetchedAt: new Date().toISOString(),
+    };
+  }
+
+  try {
+    const result = await fetchAll(baseUrl, cred.token, identifiers);
+    const endpoints = result.endpoints || {};
+    const producerResolved = result.producerId || identifiers.producerId || null;
+    const lookupClass = classifyLookupStatus(endpoints);
+
+    if (lookupClass.state === 'ok' || Object.values(endpoints).some((r) => r && r.ok)) {
+      return {
+        ok: true,
+        which: cred.label,
+        available: true,
+        identifiers: { npn: identifiers.npn || null, producerId: producerResolved },
+        fetchedAt: new Date().toISOString(),
+        summary: buildSummary(endpoints, { npn: identifiers.npn || null, producerId: producerResolved }),
+        endpointsMeta: Object.fromEntries(
+          Object.entries(endpoints).map(([key, value]) => [
+            key,
+            value
+              ? {
+                  ok: value.ok,
+                  status: value.status,
+                  statusText: value.statusText,
+                  url: value.url,
+                  shape: Array.isArray(value.body)
+                    ? { type: 'array', count: value.body.length }
+                    : value.body && typeof value.body === 'object'
+                      ? { type: 'object', keys: Object.keys(value.body).length }
+                      : { type: typeof value.body },
+                }
+              : null,
+          ]),
+        ),
+      };
+    }
+
+    const errorCode =
+      lookupClass.state === 'not_found'
+        ? 'NOT_FOUND'
+        : lookupClass.state === 'blocked'
+          ? 'ACCESS_DENIED'
+          : 'FAILED';
+
+    return {
+      ok: false,
+      which: cred.label,
+      available: true,
+      errorCode,
+      error:
+        errorCode === 'NOT_FOUND'
+          ? 'Producer not found in SureLC for the provided identifier.'
+          : errorCode === 'ACCESS_DENIED'
+            ? 'Access denied in SureLC for this producer.'
+            : 'SureLC request failed.',
+      identifiers: { npn: identifiers.npn || null, producerId: producerResolved },
+      fetchedAt: new Date().toISOString(),
+      hint:
+        errorCode === 'ACCESS_DENIED'
+          ? 'This usually means the producer is outside your SureLC account scope (firm/subscription/permissions).'
+          : undefined,
+      endpointsMeta: Object.fromEntries(
+        Object.entries(endpoints).map(([key, value]) => [
+          key,
+          value ? { ok: value.ok, status: value.status, statusText: value.statusText, url: value.url } : null,
+        ]),
+      ),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      which: cred.label,
+      available: true,
+      errorCode: 'FAILED',
+      error: 'SureLC request failed.',
+      details: String(err?.message || err),
+      identifiers,
+      fetchedAt: new Date().toISOString(),
+    };
+  }
 }
 
 function redactPII(value) {
@@ -164,6 +292,13 @@ function redactPII(value) {
     'entityTin',
     'tin',
     'taxId',
+    // Financial / policy identifiers (sensitive)
+    'routingNum',
+    'accountNum',
+    'accountNumber',
+    'bankPhoneNumber',
+    'policyNo',
+    'certificateNo',
   ]);
 
   const out = {};
@@ -246,6 +381,29 @@ function buildSummary(endpoints, identifiers) {
       npn: identifiers?.npn || null,
       producerId: identifiers?.producerId || null,
     },
+    compliance: {
+      aml: {
+        date: null,
+        provider: null,
+      },
+      eno: {
+        carrierName: null,
+        policyNoMasked: null,
+        certificateNoMasked: null,
+        startedOn: null,
+        expiresOn: null,
+        caseLimit: null,
+        totalLimit: null,
+      },
+      securities: {
+        finraLicense: null,
+        crdNo: null,
+        brokerDealer: null,
+        investmentAdviser: null,
+      },
+      designations: [],
+      dataAsOf: null,
+    },
     producer: {
       recordType: null,
       title: null,
@@ -310,6 +468,14 @@ function buildSummary(endpoints, identifiers) {
     return date.toISOString().slice(0, 10);
   };
 
+  const maskId = (value) => {
+    if (!value) return null;
+    const raw = String(value).trim();
+    if (!raw) return null;
+    const last4 = raw.slice(-4);
+    return raw.length > 4 ? `••••${last4}` : `••••${raw}`;
+  };
+
   const countBy = (items, getter) => {
     const map = new Map();
     for (const item of items) {
@@ -329,6 +495,45 @@ function buildSummary(endpoints, identifiers) {
     summary.producer.companyType = pick(producer, ['companyType', 'companyTypeW9']);
     summary.producer.entityType = pick(producer, ['entityType']);
     summary.producer.createdDate = toISODate(pick(producer, ['createdDate']));
+
+    summary.compliance.aml.date = toISODate(pick(producer, ['amlDate']));
+    summary.compliance.aml.provider = pick(producer, ['amlProvider']);
+
+    const eno = safeObject(pick(producer, ['eno'])) || safeObject(producer.eno);
+    if (eno) {
+      summary.compliance.eno.carrierName = pick(eno, ['carrierName']);
+      summary.compliance.eno.policyNoMasked = maskId(pick(eno, ['policyNo', 'policyNoMasked']));
+      summary.compliance.eno.certificateNoMasked = maskId(pick(eno, ['certificateNo', 'certificateNoMasked']));
+      summary.compliance.eno.startedOn = toISODate(pick(eno, ['startedOn']));
+      summary.compliance.eno.expiresOn = toISODate(pick(eno, ['expiresOn']));
+      summary.compliance.eno.caseLimit = pick(eno, ['caseLimit']);
+      summary.compliance.eno.totalLimit = pick(eno, ['totalLimit']);
+    }
+
+    summary.compliance.securities.finraLicense = pick(producer, ['finraLicense']);
+    summary.compliance.securities.crdNo = pick(producer, ['crdNo']);
+    summary.compliance.securities.brokerDealer = pick(producer, ['brokerDealer']);
+    summary.compliance.securities.investmentAdviser = pick(producer, ['investmentAdviser']);
+
+    const designationFields = [
+      ['clu', 'CLU'],
+      ['chfc', 'ChFC'],
+      ['cfp', 'CFP'],
+      ['mdrt', 'MDRT'],
+      ['flmi', 'FLMI'],
+      ['nqa', 'NQA'],
+      ['cfc', 'CFC'],
+    ];
+    const designations = [];
+    for (const [field, label] of designationFields) {
+      const val = pick(producer, [field]);
+      if (val === true || String(val).toLowerCase() === 'true') designations.push(label);
+    }
+    const other = pick(producer, ['honorsOtherText']);
+    if (other) designations.push(String(other));
+    summary.compliance.designations = designations;
+
+    summary.compliance.dataAsOf = toISODate(pick(producer, ['ts']));
   }
 
   const relationship = safeObject(endpoints.relationship?.body);
@@ -493,6 +698,7 @@ export default async function handler(req, res) {
     const producerIdRaw = req.query?.producerId || req.query?.producerID || req.query?.id || '';
     const producerId = normalizeDigits(producerIdRaw);
     const which = req.query?.which || 'AUTO';
+    const mode = String(req.query?.mode || req.query?.view || 'single').toLowerCase();
 
     if (!npn && !producerId) {
       res.statusCode = 400;
@@ -501,13 +707,57 @@ export default async function handler(req, res) {
       return;
     }
 
-    const cacheKey = JSON.stringify({ npn: npn || null, producerId: producerId || null, which: String(which).toUpperCase() });
+    const cacheKey = JSON.stringify({
+      npn: npn || null,
+      producerId: producerId || null,
+      which: String(which).toUpperCase(),
+      mode,
+    });
     const now = Date.now();
     const cached = cache.get(cacheKey);
     if (cached && cached.expiresAt > now) {
       res.statusCode = 200;
       res.setHeader('Content-Type', 'application/json');
       res.end(JSON.stringify({ ...cached.value, cached: true }));
+      return;
+    }
+
+    if (mode === 'both') {
+      const { equita, quility } = getCredentialOptions();
+      const asToken = (entry) =>
+        entry.token
+          ? { ...entry, token: entry.token }
+          : entry.user && entry.pass
+            ? { ...entry, token: basicAuthHeader(entry.user, entry.pass) }
+            : null;
+      const equitaCred = asToken(equita) || { ...equita, token: null };
+      const quilityCred = asToken(quility) || { ...quility, token: null };
+
+      const identifiers = { npn: npn || null, producerId: producerId || null };
+
+      // Run both in parallel.
+      const [quilityView, equitaView] = await Promise.all([
+        buildView(baseUrl, { label: 'QUILITY', token: quilityCred.token }, identifiers),
+        buildView(baseUrl, { label: 'EQUITA', token: equitaCred.token }, identifiers),
+      ]);
+
+      const payload = {
+        ok: true,
+        cached: false,
+        mode: 'both',
+        identifiers,
+        fetchedAt: new Date().toISOString(),
+        views: {
+          QUILITY: quilityView,
+          EQUITA: equitaView,
+        },
+      };
+
+      cache.set(cacheKey, { expiresAt: now + CACHE_TTL_MS, value: payload });
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(payload));
       return;
     }
 
@@ -549,6 +799,7 @@ export default async function handler(req, res) {
           ok: true,
           cached: false,
           whichUsed: cand.label,
+          mode: 'single',
           identifiers: { npn: npn || null, producerId: producerResolved },
           fetchedAt: new Date().toISOString(),
           summary: buildSummary(endpoints, { npn: npn || null, producerId: producerResolved }),
@@ -570,7 +821,6 @@ export default async function handler(req, res) {
                 : null,
             ]),
           ),
-          endpoints: redactPII(endpoints),
           attempts,
         };
 
@@ -595,6 +845,7 @@ export default async function handler(req, res) {
     const failurePayload = {
       ok: false,
       cached: false,
+      mode: 'single',
       errorCode: hadNotFound ? 'NOT_FOUND' : allBlocked ? 'ACCESS_DENIED' : 'FAILED',
       error: hadNotFound
         ? 'Producer not found in SureLC for the provided identifier.'

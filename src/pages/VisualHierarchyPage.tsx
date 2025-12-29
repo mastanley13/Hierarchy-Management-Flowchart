@@ -57,9 +57,10 @@ type SurelcEndpointResult = {
 type SurelcProducerPayload = {
   ok: boolean;
   cached: boolean;
-  whichUsed: string;
+  whichUsed?: string;
   identifiers: { npn: string | null; producerId: string | null };
   fetchedAt: string;
+  mode?: 'single' | 'both';
   errorCode?: 'NOT_FOUND' | 'ACCESS_DENIED' | 'FAILED';
   error?: string;
   details?: string;
@@ -72,6 +73,26 @@ type SurelcProducerPayload = {
     relationship: { status: number; ok: boolean } | null;
   }>;
   summary?: {
+    compliance?: {
+      aml?: { date: string | null; provider: string | null };
+      eno?: {
+        carrierName: string | null;
+        policyNoMasked: string | null;
+        certificateNoMasked: string | null;
+        startedOn: string | null;
+        expiresOn: string | null;
+        caseLimit: number | null;
+        totalLimit: number | null;
+      };
+      securities?: {
+        finraLicense: boolean | null;
+        crdNo: string | null;
+        brokerDealer: string | null;
+        investmentAdviser: string | null;
+      };
+      designations?: string[];
+      dataAsOf?: string | null;
+    };
     producer?: {
       recordType: string | null;
       title: string | null;
@@ -135,7 +156,8 @@ type SurelcProducerPayload = {
       }
     | null
   >;
-  endpoints: Record<string, SurelcEndpointResult | undefined>;
+  endpoints?: Record<string, SurelcEndpointResult | undefined>;
+  views?: Partial<Record<'QUILITY' | 'EQUITA', any>>;
 };
 
 type SurelcFetchState = {
@@ -150,6 +172,13 @@ type ExportMode =
   | 'full-svg'
   | 'selected-branch-csv'
   | 'all-csv';
+
+type ExportProgress = {
+  mode: ExportMode;
+  phase: string;
+  completed: number;
+  total: number;
+};
 
 type FieldRow = {
   label: string;
@@ -242,6 +271,8 @@ const VisualHierarchyPage: React.FC = () => {
   const [showAllChildren, setShowAllChildren] = useState(false);
   const [exportDropdownOpen, setExportDropdownOpen] = useState(false);
   const exportDropdownRef = useRef<HTMLDivElement | null>(null);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ExportProgress | null>(null);
 
   useEffect(() => {
     try {
@@ -316,7 +347,7 @@ const VisualHierarchyPage: React.FC = () => {
         // ignore parse errors
       }
     }
-    setExpandedIds(graph.rootIds);
+    setExpandedIds(Array.from(graph.nodesById.keys()));
   }, [graph, setExpandedIds]);
 
   useEffect(() => {
@@ -788,12 +819,8 @@ const VisualHierarchyPage: React.FC = () => {
     const url = new URL('/api/surelc/producer', window.location.origin);
     if (npn) url.searchParams.set('npn', npn);
     if (producerId) url.searchParams.set('producerId', producerId);
-    const which = selectedNode.vendorGroup === 'equita'
-      ? 'EQUITA'
-      : selectedNode.vendorGroup === 'quility'
-        ? 'QUILITY'
-        : 'AUTO';
-    url.searchParams.set('which', which);
+    url.searchParams.set('which', 'AUTO');
+    url.searchParams.set('mode', 'both');
 
     fetch(url.toString(), {
       headers: { Accept: 'application/json' },
@@ -852,28 +879,39 @@ const VisualHierarchyPage: React.FC = () => {
     if (surelcState.loading) return '...';
     if (surelcState.error) return '!';
     if (surelcState.data && surelcState.data.ok === false) return '!';
-    const endpoints = surelcState.data?.endpoints || {};
-    const okCount = Object.values(endpoints).filter((r) => r?.ok).length;
+
+    if (surelcState.data?.mode === 'both' && surelcState.data?.views) {
+      const okCount = Object.values(surelcState.data.views).filter((v) => v?.ok).length;
+      return okCount || undefined;
+    }
+
+    const meta = surelcState.data?.endpointsMeta || {};
+    const okCount = Object.values(meta).filter((r) => r?.ok).length;
     return okCount || undefined;
   }, [surelcState.data, surelcState.error, surelcState.loading]);
 
-  const surelcRows = useMemo((): {
+  const buildSurelcRows = useCallback((params: {
+    identifiers: { npn: string | null; producerId: string | null } | undefined;
+    summary: SurelcProducerPayload['summary'] | undefined;
+  }): {
     overview: FieldRow[];
     appointments: FieldRow[];
     licenses: FieldRow[];
     contracts: FieldRow[];
   } => {
-    const data = surelcState.data?.summary;
+    const data = params.summary;
     const relationship = data?.relationship;
     const producer = data?.producer;
+    const compliance = data?.compliance;
     const statuses = data?.statuses;
     const licenses = data?.licenses;
     const appointments = data?.appointments;
     const contracts = data?.contracts;
+    const ids = params.identifiers;
 
     const overview: FieldRow[] = [
-      { label: 'SureLC Producer ID', value: surelcState.data?.identifiers.producerId ?? '-' },
-      { label: 'SureLC NPN', value: surelcState.data?.identifiers.npn ?? selectedNode?.npn ?? '-' },
+      { label: 'SureLC Producer ID', value: ids?.producerId ?? '-' },
+      { label: 'SureLC NPN', value: ids?.npn ?? selectedNode?.npn ?? '-' },
       { label: 'Upline (SureLC)', value: relationship?.upline ?? '-' },
       { label: 'Comp Level / Branch Code', value: relationship?.branchCode ?? producer?.title ?? '-' },
       { label: 'Producer Status', value: statuses?.producer ?? relationship?.status ?? '-' },
@@ -884,6 +922,22 @@ const VisualHierarchyPage: React.FC = () => {
       { label: 'Unsubscribed On', value: relationship?.unsubscriptionDate ?? '-' },
       { label: 'Errors', value: relationship?.errors ?? '-' },
       { label: 'Warnings', value: relationship?.warnings ?? '-' },
+      { label: 'AML Date', value: compliance?.aml?.date ?? '-' },
+      { label: 'AML Provider', value: compliance?.aml?.provider ?? '-' },
+      {
+        label: 'E&O',
+        value: compliance?.eno?.carrierName
+          ? `${compliance.eno.carrierName}${compliance.eno.expiresOn ? ` (exp ${compliance.eno.expiresOn})` : ''}`
+          : '-',
+      },
+      { label: 'E&O Policy', value: compliance?.eno?.policyNoMasked ?? '-' },
+      { label: 'E&O Certificate', value: compliance?.eno?.certificateNoMasked ?? '-' },
+      { label: 'FINRA Licensed', value: typeof compliance?.securities?.finraLicense === 'boolean' ? (compliance.securities.finraLicense ? 'Yes' : 'No') : '-' },
+      { label: 'CRD #', value: compliance?.securities?.crdNo ?? '-' },
+      { label: 'Broker Dealer', value: compliance?.securities?.brokerDealer ?? '-' },
+      { label: 'Investment Adviser', value: compliance?.securities?.investmentAdviser ?? '-' },
+      { label: 'Designations', value: compliance?.designations?.length ? compliance.designations.join(', ') : '-' },
+      { label: 'Data As Of', value: compliance?.dataAsOf ?? '-' },
       { label: 'Record Type', value: producer?.recordType ?? '-' },
       { label: 'Company Type', value: producer?.companyType ?? '-' },
       { label: 'Entity Type', value: producer?.entityType ?? '-' },
@@ -913,7 +967,14 @@ const VisualHierarchyPage: React.FC = () => {
     ];
 
     return { overview, appointments: apptRows, licenses: licenseRows, contracts: contractRows };
-  }, [selectedNode?.npn, surelcState.data?.identifiers, surelcState.data?.summary]);
+  }, [selectedNode?.npn]);
+
+  const surelcViews = useMemo(() => {
+    const data = surelcState.data;
+    if (!data || data.ok === false) return null;
+    if (data.mode !== 'both' || !data.views) return null;
+    return data.views;
+  }, [surelcState.data]);
 
   const handleToggleNode = useCallback(
     (id: string) => {
@@ -1056,9 +1117,109 @@ const VisualHierarchyPage: React.FC = () => {
     [focusNode],
   );
 
+  const fetchSurelcPayload = useCallback(async (node: PersonNode): Promise<SurelcProducerPayload | null> => {
+    const npn = normalizeDigits(node.npn ?? '');
+    const rawSurelcId = normalizeDigits(node.sourceNode?.raw?.surelcId ?? '');
+    const producerId = rawSurelcId;
+
+    if (!npn && !producerId) {
+      return null;
+    }
+
+    const which = node.vendorGroup === 'equita' ? 'EQUITA' : node.vendorGroup === 'quility' ? 'QUILITY' : 'AUTO';
+
+    const url = new URL('/api/surelc/producer', window.location.origin);
+    if (npn) url.searchParams.set('npn', npn);
+    if (producerId) url.searchParams.set('producerId', producerId);
+    url.searchParams.set('which', which);
+
+    const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+    const text = await res.text();
+    let json: any = null;
+    try {
+      json = text ? JSON.parse(text) : null;
+    } catch {
+      json = { ok: false, error: text || `SureLC request failed (${res.status})` };
+    }
+
+    if (!res.ok) {
+      const message = json?.error && json?.details ? `${json.error}: ${json.details}` : json?.error || json?.details;
+      throw new Error(message || `SureLC request failed (${res.status})`);
+    }
+
+    return (json || null) as SurelcProducerPayload | null;
+  }, []);
+
+  const fetchSurelcForRows = useCallback(
+    async (mode: ExportMode, rows: ExportCsvRow[]) => {
+      const lookups: Array<{
+        key: string;
+        node: PersonNode;
+      }> = [];
+      const lookupByNodeId = new Map<string, string | null>();
+      const seen = new Set<string>();
+
+      rows.forEach(({ node }) => {
+        const npn = normalizeDigits(node.npn ?? '');
+        const producerId = normalizeDigits(node.sourceNode?.raw?.surelcId ?? '');
+        if (!npn && !producerId) {
+          lookupByNodeId.set(node.id, null);
+          return;
+        }
+
+        const which = node.vendorGroup === 'equita' ? 'EQUITA' : node.vendorGroup === 'quility' ? 'QUILITY' : 'AUTO';
+        const key = `which=${which}|npn=${npn}|producerId=${producerId}`;
+        lookupByNodeId.set(node.id, key);
+        if (seen.has(key)) return;
+        seen.add(key);
+        lookups.push({ key, node });
+      });
+
+      setExportProgress({ mode, phase: 'Fetching SureLC', completed: 0, total: lookups.length });
+
+      const surelcByKey = new Map<string, SurelcProducerPayload | null>();
+      const concurrency = 6;
+      let completed = 0;
+      let nextIndex = 0;
+
+      const worker = async () => {
+        while (true) {
+          const idx = nextIndex;
+          nextIndex += 1;
+          if (idx >= lookups.length) return;
+          const { key, node } = lookups[idx];
+          try {
+            const payload = await fetchSurelcPayload(node);
+            surelcByKey.set(key, payload);
+          } catch (error) {
+            console.warn('SureLC export fetch failed', { nodeId: node.id, error });
+            surelcByKey.set(key, null);
+          } finally {
+            completed += 1;
+            if (completed === lookups.length || completed % 5 === 0) {
+              setExportProgress({ mode, phase: 'Fetching SureLC', completed, total: lookups.length });
+            }
+          }
+        }
+      };
+
+      await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, lookups.length)) }, () => worker()));
+
+      const surelcByNodeId = new Map<string, SurelcProducerPayload | null>();
+      rows.forEach(({ node }) => {
+        const key = lookupByNodeId.get(node.id) ?? null;
+        surelcByNodeId.set(node.id, key ? (surelcByKey.get(key) ?? null) : null);
+      });
+
+      return surelcByNodeId;
+    },
+    [fetchSurelcPayload],
+  );
+
   const handleExport = useCallback(
     async (mode: ExportMode) => {
       if (!graph) return;
+      if (exportBusy) return;
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
       if (mode === 'selected-branch-csv') {
@@ -1112,8 +1273,17 @@ const VisualHierarchyPage: React.FC = () => {
 
         const rows = [...uplineRows, selectedRow, ...downlineRows];
 
-        const csv = generateHierarchyCsv(rows, exportGraph, exportFieldLabels);
-        downloadCsv(csv, filename);
+        setExportBusy(true);
+        try {
+          const surelcByNodeId = await fetchSurelcForRows(mode, rows);
+          setExportProgress({ mode, phase: 'Generating CSV', completed: 0, total: 1 });
+          const csv = generateHierarchyCsv(rows, exportGraph, exportFieldLabels, surelcByNodeId);
+          downloadCsv(csv, filename);
+          setExportProgress({ mode, phase: 'Done', completed: 1, total: 1 });
+        } finally {
+          window.setTimeout(() => setExportProgress(null), 600);
+          setExportBusy(false);
+        }
         return;
       }
 
@@ -1132,8 +1302,17 @@ const VisualHierarchyPage: React.FC = () => {
         }
 
         const rows = collectAllCsvRows(exportGraph);
-        const csv = generateHierarchyCsv(rows, exportGraph, exportFieldLabels);
-        downloadCsv(csv, filename);
+        setExportBusy(true);
+        try {
+          const surelcByNodeId = await fetchSurelcForRows(mode, rows);
+          setExportProgress({ mode, phase: 'Generating CSV', completed: 0, total: 1 });
+          const csv = generateHierarchyCsv(rows, exportGraph, exportFieldLabels, surelcByNodeId);
+          downloadCsv(csv, filename);
+          setExportProgress({ mode, phase: 'Done', completed: 1, total: 1 });
+        } finally {
+          window.setTimeout(() => setExportProgress(null), 600);
+          setExportBusy(false);
+        }
         return;
       }
 
@@ -1201,7 +1380,20 @@ const VisualHierarchyPage: React.FC = () => {
         setExpandedIds(prevExpanded);
       }
     },
-    [canvasRef, graph, density, expandedIds, setExpandedIds, parentMap, scopeRootId, selectedNodeId, reactFlowInstance, theme],
+    [
+      canvasRef,
+      graph,
+      density,
+      expandedIds,
+      exportBusy,
+      fetchSurelcForRows,
+      parentMap,
+      reactFlowInstance,
+      scopeRootId,
+      selectedNodeId,
+      setExpandedIds,
+      theme,
+    ],
   );
 
   const handleRefresh = useCallback(() => {
@@ -1303,20 +1495,22 @@ const VisualHierarchyPage: React.FC = () => {
                 SureLC Demo
               </button>
             )}
-            <h1>Hierarchy System</h1>
-            <div className="visual-hierarchy-export-dropdown" ref={exportDropdownRef}>
-              <button
-                type="button"
-                className="visual-hierarchy-btn visual-hierarchy-btn--export"
-                onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
-              >
-                <Download size={16} />
-                Export
-                <ChevronDown size={14} />
-              </button>
-              {exportDropdownOpen && (
-                <div className="visual-hierarchy-export-dropdown__menu">
-                  <button
+             <h1>Hierarchy System</h1>
+             <div className="visual-hierarchy-export-dropdown" ref={exportDropdownRef}>
+               <button
+                 type="button"
+                 className="visual-hierarchy-btn visual-hierarchy-btn--export"
+                 disabled={exportBusy}
+                 title={exportBusy ? 'Export in progress…' : undefined}
+                 onClick={() => setExportDropdownOpen(!exportDropdownOpen)}
+               >
+                 <Download size={16} />
+                 {exportBusy ? 'Exporting…' : 'Export'}
+                 <ChevronDown size={14} />
+               </button>
+               {exportDropdownOpen && (
+                 <div className="visual-hierarchy-export-dropdown__menu">
+                   <button
                     type="button"
                     className="visual-hierarchy-export-dropdown__item"
                     onClick={() => {
@@ -1326,36 +1520,50 @@ const VisualHierarchyPage: React.FC = () => {
                   >
                     <Download size={16} />
                     Export PNG
-                  </button>
-                  <button
-                    type="button"
-                    className="visual-hierarchy-export-dropdown__item"
-                    onClick={() => {
-                      handleExport('all-csv');
-                      setExportDropdownOpen(false);
-                    }}
-                  >
-                    <Download size={16} />
-                    Export All CSV
-                  </button>
-                  <div className="visual-hierarchy-export-dropdown__divider" />
-                  <button
-                    type="button"
-                    className="visual-hierarchy-export-dropdown__item"
-                    disabled={!selectedNodeId && !scopeRootId}
-                    title={!selectedNodeId && !scopeRootId ? 'Select a node (or focus a branch) to export.' : undefined}
-                    onClick={() => {
-                      handleExport('selected-branch-csv');
-                      setExportDropdownOpen(false);
-                    }}
-                  >
-                    <Download size={16} />
-                    Export Branch CSV
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
+                   </button>
+                   <button
+                     type="button"
+                     className="visual-hierarchy-export-dropdown__item"
+                     disabled={exportBusy}
+                     title={exportBusy ? 'Export in progress…' : undefined}
+                     onClick={() => {
+                       handleExport('all-csv');
+                       setExportDropdownOpen(false);
+                     }}
+                   >
+                     <Download size={16} />
+                     Export All CSV
+                   </button>
+                   <div className="visual-hierarchy-export-dropdown__divider" />
+                   <button
+                     type="button"
+                     className="visual-hierarchy-export-dropdown__item"
+                     disabled={exportBusy || (!selectedNodeId && !scopeRootId)}
+                     title={
+                       exportBusy
+                         ? 'Export in progress…'
+                         : !selectedNodeId && !scopeRootId
+                           ? 'Select a node (or focus a branch) to export.'
+                           : undefined
+                     }
+                     onClick={() => {
+                       handleExport('selected-branch-csv');
+                       setExportDropdownOpen(false);
+                     }}
+                   >
+                     <Download size={16} />
+                     Export Branch CSV
+                   </button>
+                 </div>
+               )}
+               {exportProgress && (
+                 <div className="visual-hierarchy-export-progress" role="status" aria-live="polite">
+                   {exportProgress.phase}
+                   {exportProgress.total > 0 ? ` (${exportProgress.completed}/${exportProgress.total})` : ''}
+                 </div>
+               )}
+             </div>
+           </div>
         <div className="visual-hierarchy-stats">
           <div className="visual-hierarchy-stat-card">
             <Users size={18} />
@@ -1686,6 +1894,109 @@ const VisualHierarchyPage: React.FC = () => {
                             </div>
                           ) : null}
                         </div>
+                      ) : surelcViews ? (
+                        <>
+                          <div className="surelc-section__meta">
+                            <span>Live - {formatDate(surelcState.data?.fetchedAt) ?? surelcState.data?.fetchedAt}</span>
+                          </div>
+
+                          {(['QUILITY', 'EQUITA'] as const).map((key) => {
+                            const view = surelcViews[key];
+                            if (!view) return null;
+                            return (
+                              <div key={key} className="surelc-section__view">
+                                <div className="surelc-section__view-header">
+                                  <span className="surelc-section__view-title">{key}</span>
+                                  <span className={`surelc-section__view-chip ${view.ok ? 'is-ok' : 'is-bad'}`}>
+                                    {view.ok ? 'connected' : view.available ? 'blocked' : 'not configured'}
+                                  </span>
+                                  {view.identifiers?.producerId ? (
+                                    <span className="surelc-section__view-subtitle">Producer ID: {view.identifiers.producerId}</span>
+                                  ) : null}
+                                </div>
+
+                                {!view.ok ? (
+                                  <div className="surelc-section__failure">
+                                    <div className="surelc-section__error">{view.error || 'SureLC unavailable'}</div>
+                                    {view.hint ? <div className="surelc-section__hint">{view.hint}</div> : null}
+                                  </div>
+                                ) : (
+                                  (() => {
+                                    const rows = buildSurelcRows({ identifiers: view.identifiers, summary: view.summary });
+                                    return (
+                                      <>
+                                        <div className="surelc-section__group">
+                                          <div className="surelc-section__group-header">
+                                            <span className="surelc-section__group-title">Overview</span>
+                                            <span className="surelc-section__group-badge">{rows.overview.length}</span>
+                                          </div>
+                                          <div className="visual-hierarchy-inspector__details">
+                                            {rows.overview.map((field) => (
+                                              <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                                <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                                <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                                  {field.value}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+
+                                        <div className="surelc-section__group">
+                                          <div className="surelc-section__group-header">
+                                            <span className="surelc-section__group-title">Licenses</span>
+                                          </div>
+                                          <div className="visual-hierarchy-inspector__details">
+                                            {rows.licenses.map((field) => (
+                                              <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                                <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                                <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                                  {field.value}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+
+                                        <div className="surelc-section__group">
+                                          <div className="surelc-section__group-header">
+                                            <span className="surelc-section__group-title">Appointments</span>
+                                          </div>
+                                          <div className="visual-hierarchy-inspector__details">
+                                            {rows.appointments.map((field) => (
+                                              <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                                <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                                <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                                  {field.value}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+
+                                        <div className="surelc-section__group">
+                                          <div className="surelc-section__group-header">
+                                            <span className="surelc-section__group-title">Contracts</span>
+                                          </div>
+                                          <div className="visual-hierarchy-inspector__details">
+                                            {rows.contracts.map((field) => (
+                                              <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                                                <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                                                <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                                  {field.value}
+                                                </span>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        </div>
+                                      </>
+                                    );
+                                  })()
+                                )}
+                              </div>
+                            );
+                          })}
+                        </>
                       ) : surelcState.data ? (
                         <>
                           <div className="surelc-section__meta">
@@ -1698,10 +2009,10 @@ const VisualHierarchyPage: React.FC = () => {
                           <div className="surelc-section__group">
                             <div className="surelc-section__group-header">
                               <span className="surelc-section__group-title">Overview</span>
-                              <span className="surelc-section__group-badge">{surelcRows.overview.length}</span>
+                              <span className="surelc-section__group-badge">{buildSurelcRows({ identifiers: surelcState.data.identifiers, summary: surelcState.data.summary }).overview.length}</span>
                             </div>
                             <div className="visual-hierarchy-inspector__details">
-                              {surelcRows.overview.map((field) => (
+                              {buildSurelcRows({ identifiers: surelcState.data.identifiers, summary: surelcState.data.summary }).overview.map((field) => (
                                 <div key={field.label} className="visual-hierarchy-inspector__detail-row">
                                   <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
                                   <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
@@ -1717,7 +2028,7 @@ const VisualHierarchyPage: React.FC = () => {
                               <span className="surelc-section__group-title">Licenses</span>
                             </div>
                             <div className="visual-hierarchy-inspector__details">
-                              {surelcRows.licenses.map((field) => (
+                              {buildSurelcRows({ identifiers: surelcState.data.identifiers, summary: surelcState.data.summary }).licenses.map((field) => (
                                 <div key={field.label} className="visual-hierarchy-inspector__detail-row">
                                   <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
                                   <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
@@ -1733,7 +2044,7 @@ const VisualHierarchyPage: React.FC = () => {
                               <span className="surelc-section__group-title">Appointments</span>
                             </div>
                             <div className="visual-hierarchy-inspector__details">
-                              {surelcRows.appointments.map((field) => (
+                              {buildSurelcRows({ identifiers: surelcState.data.identifiers, summary: surelcState.data.summary }).appointments.map((field) => (
                                 <div key={field.label} className="visual-hierarchy-inspector__detail-row">
                                   <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
                                   <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
@@ -1749,7 +2060,7 @@ const VisualHierarchyPage: React.FC = () => {
                               <span className="surelc-section__group-title">Contracts</span>
                             </div>
                             <div className="visual-hierarchy-inspector__details">
-                              {surelcRows.contracts.map((field) => (
+                              {buildSurelcRows({ identifiers: surelcState.data.identifiers, summary: surelcState.data.summary }).contracts.map((field) => (
                                 <div key={field.label} className="visual-hierarchy-inspector__detail-row">
                                   <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
                                   <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
@@ -1995,6 +2306,185 @@ type ExportCsvRow = {
   segment?: 'upline' | 'downline' | 'selected' | 'all';
 };
 
+const normalizeDigits = (value: unknown): string => {
+  if (typeof value === 'string') return value.replace(/\D+/g, '');
+  if (typeof value === 'number') return String(value).replace(/\D+/g, '');
+  return '';
+};
+
+const SURELC_EXPORT_DESIGNATION_SLOTS = 8;
+const SURELC_EXPORT_STATUS_SLOTS = 10;
+const SURELC_EXPORT_RESIDENT_STATE_SLOTS = 10;
+const SURELC_EXPORT_TOP_CARRIER_SLOTS = 5;
+
+const SURELC_EXPORT_COLUMNS: Array<{
+  header: string;
+  value: (payload: SurelcProducerPayload | null) => unknown;
+}> = (() => {
+  const cols: Array<{
+    header: string;
+    value: (payload: SurelcProducerPayload | null) => unknown;
+  }> = [];
+
+  const summary = (payload: SurelcProducerPayload | null) => payload?.summary;
+  const compliance = (payload: SurelcProducerPayload | null) => summary(payload)?.compliance;
+  const producer = (payload: SurelcProducerPayload | null) => summary(payload)?.producer;
+  const relationship = (payload: SurelcProducerPayload | null) => summary(payload)?.relationship;
+  const statuses = (payload: SurelcProducerPayload | null) => summary(payload)?.statuses;
+  const licenses = (payload: SurelcProducerPayload | null) => summary(payload)?.licenses;
+  const appointments = (payload: SurelcProducerPayload | null) => summary(payload)?.appointments;
+  const contracts = (payload: SurelcProducerPayload | null) => summary(payload)?.contracts;
+
+  cols.push(
+    { header: 'SureLC Ok', value: (p) => p?.ok ?? '' },
+    { header: 'SureLC Cached', value: (p) => p?.cached ?? '' },
+    { header: 'SureLC Which Used', value: (p) => p?.whichUsed ?? '' },
+    { header: 'SureLC Fetched At', value: (p) => p?.fetchedAt ?? '' },
+    { header: 'SureLC Error Code', value: (p) => p?.errorCode ?? '' },
+    { header: 'SureLC Error', value: (p) => p?.error ?? '' },
+    { header: 'SureLC Details', value: (p) => p?.details ?? '' },
+    { header: 'SureLC NPN', value: (p) => p?.identifiers?.npn ?? '' },
+    { header: 'SureLC Producer ID', value: (p) => p?.identifiers?.producerId ?? '' },
+  );
+
+  cols.push(
+    { header: 'SureLC Producer Status', value: (p) => statuses(p)?.producer ?? '' },
+    { header: 'SureLC BGA Status', value: (p) => statuses(p)?.bga ?? '' },
+    { header: 'SureLC Carrier Status', value: (p) => statuses(p)?.carrier ?? '' },
+  );
+
+  cols.push(
+    { header: 'SureLC Relationship GA ID', value: (p) => relationship(p)?.gaId ?? '' },
+    { header: 'SureLC Relationship Branch Code', value: (p) => relationship(p)?.branchCode ?? '' },
+    { header: 'SureLC Relationship Upline', value: (p) => relationship(p)?.upline ?? '' },
+    { header: 'SureLC Relationship Status', value: (p) => relationship(p)?.status ?? '' },
+    { header: 'SureLC Relationship Subscribed', value: (p) => relationship(p)?.subscribed ?? '' },
+    { header: 'SureLC Relationship Unsubscription Date', value: (p) => relationship(p)?.unsubscriptionDate ?? '' },
+    { header: 'SureLC Relationship Added On', value: (p) => relationship(p)?.addedOn ?? '' },
+    { header: 'SureLC Relationship Errors', value: (p) => relationship(p)?.errors ?? '' },
+    { header: 'SureLC Relationship Warnings', value: (p) => relationship(p)?.warnings ?? '' },
+  );
+
+  cols.push(
+    { header: 'SureLC AML Date', value: (p) => compliance(p)?.aml?.date ?? '' },
+    { header: 'SureLC AML Provider', value: (p) => compliance(p)?.aml?.provider ?? '' },
+    { header: 'SureLC E&O Carrier', value: (p) => compliance(p)?.eno?.carrierName ?? '' },
+    { header: 'SureLC E&O Started On', value: (p) => compliance(p)?.eno?.startedOn ?? '' },
+    { header: 'SureLC E&O Expires On', value: (p) => compliance(p)?.eno?.expiresOn ?? '' },
+    { header: 'SureLC E&O Case Limit', value: (p) => compliance(p)?.eno?.caseLimit ?? '' },
+    { header: 'SureLC E&O Total Limit', value: (p) => compliance(p)?.eno?.totalLimit ?? '' },
+    { header: 'SureLC E&O Policy (Masked)', value: (p) => compliance(p)?.eno?.policyNoMasked ?? '' },
+    { header: 'SureLC E&O Certificate (Masked)', value: (p) => compliance(p)?.eno?.certificateNoMasked ?? '' },
+  );
+
+  cols.push(
+    { header: 'SureLC FINRA Licensed', value: (p) => compliance(p)?.securities?.finraLicense ?? '' },
+    { header: 'SureLC CRD #', value: (p) => compliance(p)?.securities?.crdNo ?? '' },
+    { header: 'SureLC Broker Dealer', value: (p) => compliance(p)?.securities?.brokerDealer ?? '' },
+    { header: 'SureLC Investment Adviser', value: (p) => compliance(p)?.securities?.investmentAdviser ?? '' },
+  );
+
+  cols.push(
+    { header: 'SureLC Record Type', value: (p) => producer(p)?.recordType ?? '' },
+    { header: 'SureLC Title', value: (p) => producer(p)?.title ?? '' },
+    { header: 'SureLC Company Type', value: (p) => producer(p)?.companyType ?? '' },
+    { header: 'SureLC Entity Type', value: (p) => producer(p)?.entityType ?? '' },
+    { header: 'SureLC Created Date', value: (p) => producer(p)?.createdDate ?? '' },
+    { header: 'SureLC Data As Of', value: (p) => compliance(p)?.dataAsOf ?? '' },
+  );
+
+  for (let i = 1; i <= SURELC_EXPORT_DESIGNATION_SLOTS; i += 1) {
+    cols.push({
+      header: `SureLC Designation ${i}`,
+      value: (p) => compliance(p)?.designations?.[i - 1] ?? '',
+    });
+  }
+
+  cols.push(
+    { header: 'SureLC Licenses Total', value: (p) => licenses(p)?.total ?? '' },
+    { header: 'SureLC Licenses Soonest Expiration', value: (p) => licenses(p)?.soonestExpiration ?? '' },
+  );
+  for (let i = 1; i <= SURELC_EXPORT_RESIDENT_STATE_SLOTS; i += 1) {
+    cols.push({
+      header: `SureLC License Resident State ${i}`,
+      value: (p) => licenses(p)?.residentStates?.[i - 1] ?? '',
+    });
+  }
+  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `SureLC License Status ${i}`,
+        value: (p) => licenses(p)?.byStatus?.[i - 1]?.status ?? '',
+      },
+      {
+        header: `SureLC License Status Count ${i}`,
+        value: (p) => licenses(p)?.byStatus?.[i - 1]?.count ?? '',
+      },
+    );
+  }
+
+  cols.push(
+    { header: 'SureLC Appointments Total', value: (p) => appointments(p)?.total ?? '' },
+    { header: 'SureLC Appointments Appointed Carriers', value: (p) => appointments(p)?.appointedCarriers ?? '' },
+    { header: 'SureLC Appointments Terminated Carriers', value: (p) => appointments(p)?.terminatedCarriers ?? '' },
+  );
+  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `SureLC Appointment Status ${i}`,
+        value: (p) => appointments(p)?.byStatus?.[i - 1]?.status ?? '',
+      },
+      {
+        header: `SureLC Appointment Status Count ${i}`,
+        value: (p) => appointments(p)?.byStatus?.[i - 1]?.count ?? '',
+      },
+    );
+  }
+  for (let i = 1; i <= SURELC_EXPORT_TOP_CARRIER_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `SureLC Appointment Top Carrier ${i} ID`,
+        value: (p) => appointments(p)?.byCarrierTop?.[i - 1]?.carrierId ?? '',
+      },
+      {
+        header: `SureLC Appointment Top Carrier ${i} Total`,
+        value: (p) => appointments(p)?.byCarrierTop?.[i - 1]?.total ?? '',
+      },
+    );
+  }
+
+  cols.push(
+    { header: 'SureLC Contracts Total', value: (p) => contracts(p)?.total ?? '' },
+    { header: 'SureLC Contracts Active Carriers', value: (p) => contracts(p)?.activeCarriers ?? '' },
+  );
+  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `SureLC Contract Status ${i}`,
+        value: (p) => contracts(p)?.byStatus?.[i - 1]?.status ?? '',
+      },
+      {
+        header: `SureLC Contract Status Count ${i}`,
+        value: (p) => contracts(p)?.byStatus?.[i - 1]?.count ?? '',
+      },
+    );
+  }
+  for (let i = 1; i <= SURELC_EXPORT_TOP_CARRIER_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `SureLC Contract Top Carrier ${i} ID`,
+        value: (p) => contracts(p)?.byCarrierTop?.[i - 1]?.carrierId ?? '',
+      },
+      {
+        header: `SureLC Contract Top Carrier ${i} Total`,
+        value: (p) => contracts(p)?.byCarrierTop?.[i - 1]?.total ?? '',
+      },
+    );
+  }
+
+  return cols;
+})();
+
 const toCsvScalar = (value: unknown): string => {
   if (value === null || value === undefined) return '';
   if (Array.isArray(value)) {
@@ -2119,7 +2609,12 @@ const collectAllCsvRows = (graph: HierarchyGraph): ExportCsvRow[] => {
   return rows;
 };
 
-const generateHierarchyCsv = (rows: ExportCsvRow[], graph: HierarchyGraph, fieldLabels?: Record<string, string>) => {
+const generateHierarchyCsv = (
+  rows: ExportCsvRow[],
+  graph: HierarchyGraph,
+  fieldLabels?: Record<string, string>,
+  surelcByNodeId?: Map<string, SurelcProducerPayload | null>,
+) => {
   const readCustom = (node: PersonNode, key: string) => node.sourceNode.customFields?.[key];
   const readOpportunityCustom = (node: PersonNode, key: string) => node.sourceNode.opportunity?.customFields?.[key];
   const profile = (node: PersonNode) => {
@@ -2224,12 +2719,17 @@ const generateHierarchyCsv = (rows: ExportCsvRow[], graph: HierarchyGraph, field
     'contact.phone_numer',
   ] as const;
 
-  const headers = [...baseHeaders, ...exportFieldKeys.map((key) => labelForExportFieldKey(key, fieldLabels))];
+  const headers = [
+    ...baseHeaders,
+    ...exportFieldKeys.map((key) => labelForExportFieldKey(key, fieldLabels)),
+    ...SURELC_EXPORT_COLUMNS.map((col) => col.header),
+  ];
 
   const lines: string[] = [headers.map(escapeCsvField).join(',')];
   rows.forEach(({ node, distanceFromSelected, segment }) => {
     const upline = node.parentId ? graph.nodesById.get(node.parentId) : null;
     const opp = node.sourceNode.opportunity;
+    const surelcPayload = surelcByNodeId?.get(node.id) ?? null;
 
     const baseValues = [
       // contactInfo
@@ -2329,6 +2829,7 @@ const generateHierarchyCsv = (rows: ExportCsvRow[], graph: HierarchyGraph, field
       [
         ...baseValues,
         ...exportFieldValues,
+        ...SURELC_EXPORT_COLUMNS.map((col) => col.value(surelcPayload)),
       ].map(escapeCsvField).join(','),
     );
   });
