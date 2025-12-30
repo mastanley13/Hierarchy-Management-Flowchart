@@ -1135,12 +1135,12 @@ const VisualHierarchyPage: React.FC = () => {
       return null;
     }
 
-    const which = node.vendorGroup === 'equita' ? 'EQUITA' : node.vendorGroup === 'quility' ? 'QUILITY' : 'AUTO';
-
     const url = new URL('/api/surelc/producer', window.location.origin);
     if (npn) url.searchParams.set('npn', npn);
     if (producerId) url.searchParams.set('producerId', producerId);
-    url.searchParams.set('which', which);
+    url.searchParams.set('which', 'AUTO');
+    url.searchParams.set('mode', 'both');
+    url.searchParams.set('include', 'endpoints');
 
     const res = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
     const text = await res.text();
@@ -1176,8 +1176,7 @@ const VisualHierarchyPage: React.FC = () => {
           return;
         }
 
-        const which = node.vendorGroup === 'equita' ? 'EQUITA' : node.vendorGroup === 'quility' ? 'QUILITY' : 'AUTO';
-        const key = `which=${which}|npn=${npn}|producerId=${producerId}`;
+        const key = `mode=both|include=endpoints|npn=${npn}|producerId=${producerId}`;
         lookupByNodeId.set(node.id, key);
         if (seen.has(key)) return;
         seen.add(key);
@@ -2352,6 +2351,209 @@ const SURELC_EXPORT_STATUS_SLOTS = 10;
 const SURELC_EXPORT_RESIDENT_STATE_SLOTS = 10;
 const SURELC_EXPORT_TOP_CARRIER_SLOTS = 5;
 
+type SurelcProducerView = {
+  ok?: boolean;
+  which?: string;
+  available?: boolean;
+  identifiers?: { npn: string | null; producerId: string | null };
+  fetchedAt?: string;
+  errorCode?: string;
+  error?: string;
+  details?: string;
+  hint?: string;
+  summary?: SurelcProducerPayload['summary'];
+  endpoints?: Record<string, SurelcEndpointResult | undefined>;
+};
+
+const getSurelcView = (
+  payload: SurelcProducerPayload | null,
+  which: 'EQUITA' | 'QUILITY',
+): SurelcProducerView | null => {
+  if (!payload) return null;
+  if (payload.mode === 'both' && payload.views) {
+    return (payload.views as any)?.[which] ?? null;
+  }
+  return payload as any;
+};
+
+const SURELC_VIEW_EXPORT_COLUMNS: Array<{
+  header: string;
+  value: (view: SurelcProducerView | null) => unknown;
+}> = (() => {
+  const cols: Array<{
+    header: string;
+    value: (view: SurelcProducerView | null) => unknown;
+  }> = [];
+
+  const summary = (view: SurelcProducerView | null) => view?.summary;
+  const compliance = (view: SurelcProducerView | null) => summary(view)?.compliance;
+  const producer = (view: SurelcProducerView | null) => summary(view)?.producer;
+  const relationship = (view: SurelcProducerView | null) => summary(view)?.relationship;
+  const statuses = (view: SurelcProducerView | null) => summary(view)?.statuses;
+  const licenses = (view: SurelcProducerView | null) => summary(view)?.licenses;
+  const appointments = (view: SurelcProducerView | null) => summary(view)?.appointments;
+  const contracts = (view: SurelcProducerView | null) => summary(view)?.contracts;
+
+  cols.push(
+    { header: 'Ok', value: (v) => v?.ok ?? '' },
+    { header: 'Available', value: (v) => v?.available ?? '' },
+    { header: 'Fetched At', value: (v) => v?.fetchedAt ?? '' },
+    { header: 'Error Code', value: (v) => v?.errorCode ?? '' },
+    { header: 'Error', value: (v) => v?.error ?? '' },
+    { header: 'Details', value: (v) => v?.details ?? '' },
+    { header: 'Hint', value: (v) => v?.hint ?? '' },
+    { header: 'NPN', value: (v) => v?.identifiers?.npn ?? '' },
+    { header: 'Producer ID', value: (v) => v?.identifiers?.producerId ?? '' },
+  );
+
+  cols.push(
+    { header: 'Producer Status', value: (v) => statuses(v)?.producer ?? '' },
+    { header: 'BGA Status', value: (v) => statuses(v)?.bga ?? '' },
+    { header: 'Carrier Status', value: (v) => statuses(v)?.carrier ?? '' },
+  );
+
+  cols.push(
+    { header: 'Relationship GA ID', value: (v) => relationship(v)?.gaId ?? '' },
+    { header: 'Relationship Branch Code', value: (v) => relationship(v)?.branchCode ?? '' },
+    { header: 'Relationship Upline', value: (v) => relationship(v)?.upline ?? '' },
+    { header: 'Relationship Status', value: (v) => relationship(v)?.status ?? '' },
+    { header: 'Relationship Subscribed', value: (v) => relationship(v)?.subscribed ?? '' },
+    { header: 'Relationship Unsubscription Date', value: (v) => relationship(v)?.unsubscriptionDate ?? '' },
+    { header: 'Relationship Added On', value: (v) => relationship(v)?.addedOn ?? '' },
+    { header: 'Relationship Errors', value: (v) => relationship(v)?.errors ?? '' },
+    { header: 'Relationship Warnings', value: (v) => relationship(v)?.warnings ?? '' },
+  );
+
+  cols.push(
+    { header: 'AML Date', value: (v) => compliance(v)?.aml?.date ?? '' },
+    { header: 'AML Provider', value: (v) => compliance(v)?.aml?.provider ?? '' },
+    { header: 'E&O Carrier', value: (v) => compliance(v)?.eno?.carrierName ?? '' },
+    { header: 'E&O Started On', value: (v) => compliance(v)?.eno?.startedOn ?? '' },
+    { header: 'E&O Expires On', value: (v) => compliance(v)?.eno?.expiresOn ?? '' },
+    { header: 'E&O Case Limit', value: (v) => compliance(v)?.eno?.caseLimit ?? '' },
+    { header: 'E&O Total Limit', value: (v) => compliance(v)?.eno?.totalLimit ?? '' },
+    { header: 'E&O Policy (Masked)', value: (v) => compliance(v)?.eno?.policyNoMasked ?? '' },
+    { header: 'E&O Certificate (Masked)', value: (v) => compliance(v)?.eno?.certificateNoMasked ?? '' },
+  );
+
+  cols.push(
+    { header: 'FINRA Licensed', value: (v) => compliance(v)?.securities?.finraLicense ?? '' },
+    { header: 'CRD #', value: (v) => compliance(v)?.securities?.crdNo ?? '' },
+    { header: 'Broker Dealer', value: (v) => compliance(v)?.securities?.brokerDealer ?? '' },
+    { header: 'Investment Adviser', value: (v) => compliance(v)?.securities?.investmentAdviser ?? '' },
+  );
+
+  cols.push(
+    { header: 'Record Type', value: (v) => producer(v)?.recordType ?? '' },
+    { header: 'Title', value: (v) => producer(v)?.title ?? '' },
+    { header: 'Company Type', value: (v) => producer(v)?.companyType ?? '' },
+    { header: 'Entity Type', value: (v) => producer(v)?.entityType ?? '' },
+    { header: 'Created Date', value: (v) => producer(v)?.createdDate ?? '' },
+    { header: 'Data As Of', value: (v) => compliance(v)?.dataAsOf ?? '' },
+  );
+
+  for (let i = 1; i <= SURELC_EXPORT_DESIGNATION_SLOTS; i += 1) {
+    cols.push({
+      header: `Designation ${i}`,
+      value: (v) => compliance(v)?.designations?.[i - 1] ?? '',
+    });
+  }
+
+  cols.push(
+    { header: 'Licenses Total', value: (v) => licenses(v)?.total ?? '' },
+    { header: 'Licenses Soonest Expiration', value: (v) => licenses(v)?.soonestExpiration ?? '' },
+  );
+  for (let i = 1; i <= SURELC_EXPORT_RESIDENT_STATE_SLOTS; i += 1) {
+    cols.push({
+      header: `License Resident State ${i}`,
+      value: (v) => licenses(v)?.residentStates?.[i - 1] ?? '',
+    });
+  }
+  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `License Status ${i}`,
+        value: (v) => licenses(v)?.byStatus?.[i - 1]?.status ?? '',
+      },
+      {
+        header: `License Status Count ${i}`,
+        value: (v) => licenses(v)?.byStatus?.[i - 1]?.count ?? '',
+      },
+    );
+  }
+
+  cols.push(
+    { header: 'Appointments Total', value: (v) => appointments(v)?.total ?? '' },
+    { header: 'Appointments Appointed Carriers', value: (v) => appointments(v)?.appointedCarriers ?? '' },
+    { header: 'Appointments Terminated Carriers', value: (v) => appointments(v)?.terminatedCarriers ?? '' },
+  );
+  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `Appointment Status ${i}`,
+        value: (v) => appointments(v)?.byStatus?.[i - 1]?.status ?? '',
+      },
+      {
+        header: `Appointment Status Count ${i}`,
+        value: (v) => appointments(v)?.byStatus?.[i - 1]?.count ?? '',
+      },
+    );
+  }
+  for (let i = 1; i <= SURELC_EXPORT_TOP_CARRIER_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `Appointment Top Carrier ${i} ID`,
+        value: (v) => appointments(v)?.byCarrierTop?.[i - 1]?.carrierId ?? '',
+      },
+      {
+        header: `Appointment Top Carrier ${i} Total`,
+        value: (v) => appointments(v)?.byCarrierTop?.[i - 1]?.total ?? '',
+      },
+    );
+  }
+
+  cols.push(
+    { header: 'Contracts Total', value: (v) => contracts(v)?.total ?? '' },
+    { header: 'Contracts Active Carriers', value: (v) => contracts(v)?.activeCarriers ?? '' },
+  );
+  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `Contract Status ${i}`,
+        value: (v) => contracts(v)?.byStatus?.[i - 1]?.status ?? '',
+      },
+      {
+        header: `Contract Status Count ${i}`,
+        value: (v) => contracts(v)?.byStatus?.[i - 1]?.count ?? '',
+      },
+    );
+  }
+  for (let i = 1; i <= SURELC_EXPORT_TOP_CARRIER_SLOTS; i += 1) {
+    cols.push(
+      {
+        header: `Contract Top Carrier ${i} ID`,
+        value: (v) => contracts(v)?.byCarrierTop?.[i - 1]?.carrierId ?? '',
+      },
+      {
+        header: `Contract Top Carrier ${i} Total`,
+        value: (v) => contracts(v)?.byCarrierTop?.[i - 1]?.total ?? '',
+      },
+    );
+  }
+
+  cols.push(
+    { header: 'Endpoint Producer By NPN', value: (v) => v?.endpoints?.producerByNpn?.body ?? '' },
+    { header: 'Endpoint Producer By ID', value: (v) => v?.endpoints?.producerById?.body ?? '' },
+    { header: 'Endpoint Relationship', value: (v) => v?.endpoints?.relationship?.body ?? '' },
+    { header: 'Endpoint Licenses', value: (v) => v?.endpoints?.licenses?.body ?? '' },
+    { header: 'Endpoint Appointments', value: (v) => v?.endpoints?.appointments?.body ?? '' },
+    { header: 'Endpoint Contracts', value: (v) => v?.endpoints?.contracts?.body ?? '' },
+    { header: 'Endpoint Addresses', value: (v) => v?.endpoints?.addresses?.body ?? '' },
+  );
+
+  return cols;
+})();
+
 const SURELC_EXPORT_COLUMNS: Array<{
   header: string;
   value: (payload: SurelcProducerPayload | null) => unknown;
@@ -2361,161 +2563,20 @@ const SURELC_EXPORT_COLUMNS: Array<{
     value: (payload: SurelcProducerPayload | null) => unknown;
   }> = [];
 
-  const summary = (payload: SurelcProducerPayload | null) => payload?.summary;
-  const compliance = (payload: SurelcProducerPayload | null) => summary(payload)?.compliance;
-  const producer = (payload: SurelcProducerPayload | null) => summary(payload)?.producer;
-  const relationship = (payload: SurelcProducerPayload | null) => summary(payload)?.relationship;
-  const statuses = (payload: SurelcProducerPayload | null) => summary(payload)?.statuses;
-  const licenses = (payload: SurelcProducerPayload | null) => summary(payload)?.licenses;
-  const appointments = (payload: SurelcProducerPayload | null) => summary(payload)?.appointments;
-  const contracts = (payload: SurelcProducerPayload | null) => summary(payload)?.contracts;
-
   cols.push(
-    { header: 'SureLC Ok', value: (p) => p?.ok ?? '' },
     { header: 'SureLC Cached', value: (p) => p?.cached ?? '' },
-    { header: 'SureLC Which Used', value: (p) => p?.whichUsed ?? '' },
+    { header: 'SureLC Mode', value: (p) => p?.mode ?? 'single' },
     { header: 'SureLC Fetched At', value: (p) => p?.fetchedAt ?? '' },
-    { header: 'SureLC Error Code', value: (p) => p?.errorCode ?? '' },
-    { header: 'SureLC Error', value: (p) => p?.error ?? '' },
-    { header: 'SureLC Details', value: (p) => p?.details ?? '' },
-    { header: 'SureLC NPN', value: (p) => p?.identifiers?.npn ?? '' },
-    { header: 'SureLC Producer ID', value: (p) => p?.identifiers?.producerId ?? '' },
   );
 
-  cols.push(
-    { header: 'SureLC Producer Status', value: (p) => statuses(p)?.producer ?? '' },
-    { header: 'SureLC BGA Status', value: (p) => statuses(p)?.bga ?? '' },
-    { header: 'SureLC Carrier Status', value: (p) => statuses(p)?.carrier ?? '' },
-  );
+  const viewColumns = (label: string, key: 'EQUITA' | 'QUILITY') =>
+    SURELC_VIEW_EXPORT_COLUMNS.map((col) => ({
+      header: `${label} SureLC ${col.header}`,
+      value: (payload: SurelcProducerPayload | null) => col.value(getSurelcView(payload, key)),
+    }));
 
-  cols.push(
-    { header: 'SureLC Relationship GA ID', value: (p) => relationship(p)?.gaId ?? '' },
-    { header: 'SureLC Relationship Branch Code', value: (p) => relationship(p)?.branchCode ?? '' },
-    { header: 'SureLC Relationship Upline', value: (p) => relationship(p)?.upline ?? '' },
-    { header: 'SureLC Relationship Status', value: (p) => relationship(p)?.status ?? '' },
-    { header: 'SureLC Relationship Subscribed', value: (p) => relationship(p)?.subscribed ?? '' },
-    { header: 'SureLC Relationship Unsubscription Date', value: (p) => relationship(p)?.unsubscriptionDate ?? '' },
-    { header: 'SureLC Relationship Added On', value: (p) => relationship(p)?.addedOn ?? '' },
-    { header: 'SureLC Relationship Errors', value: (p) => relationship(p)?.errors ?? '' },
-    { header: 'SureLC Relationship Warnings', value: (p) => relationship(p)?.warnings ?? '' },
-  );
-
-  cols.push(
-    { header: 'SureLC AML Date', value: (p) => compliance(p)?.aml?.date ?? '' },
-    { header: 'SureLC AML Provider', value: (p) => compliance(p)?.aml?.provider ?? '' },
-    { header: 'SureLC E&O Carrier', value: (p) => compliance(p)?.eno?.carrierName ?? '' },
-    { header: 'SureLC E&O Started On', value: (p) => compliance(p)?.eno?.startedOn ?? '' },
-    { header: 'SureLC E&O Expires On', value: (p) => compliance(p)?.eno?.expiresOn ?? '' },
-    { header: 'SureLC E&O Case Limit', value: (p) => compliance(p)?.eno?.caseLimit ?? '' },
-    { header: 'SureLC E&O Total Limit', value: (p) => compliance(p)?.eno?.totalLimit ?? '' },
-    { header: 'SureLC E&O Policy (Masked)', value: (p) => compliance(p)?.eno?.policyNoMasked ?? '' },
-    { header: 'SureLC E&O Certificate (Masked)', value: (p) => compliance(p)?.eno?.certificateNoMasked ?? '' },
-  );
-
-  cols.push(
-    { header: 'SureLC FINRA Licensed', value: (p) => compliance(p)?.securities?.finraLicense ?? '' },
-    { header: 'SureLC CRD #', value: (p) => compliance(p)?.securities?.crdNo ?? '' },
-    { header: 'SureLC Broker Dealer', value: (p) => compliance(p)?.securities?.brokerDealer ?? '' },
-    { header: 'SureLC Investment Adviser', value: (p) => compliance(p)?.securities?.investmentAdviser ?? '' },
-  );
-
-  cols.push(
-    { header: 'SureLC Record Type', value: (p) => producer(p)?.recordType ?? '' },
-    { header: 'SureLC Title', value: (p) => producer(p)?.title ?? '' },
-    { header: 'SureLC Company Type', value: (p) => producer(p)?.companyType ?? '' },
-    { header: 'SureLC Entity Type', value: (p) => producer(p)?.entityType ?? '' },
-    { header: 'SureLC Created Date', value: (p) => producer(p)?.createdDate ?? '' },
-    { header: 'SureLC Data As Of', value: (p) => compliance(p)?.dataAsOf ?? '' },
-  );
-
-  for (let i = 1; i <= SURELC_EXPORT_DESIGNATION_SLOTS; i += 1) {
-    cols.push({
-      header: `SureLC Designation ${i}`,
-      value: (p) => compliance(p)?.designations?.[i - 1] ?? '',
-    });
-  }
-
-  cols.push(
-    { header: 'SureLC Licenses Total', value: (p) => licenses(p)?.total ?? '' },
-    { header: 'SureLC Licenses Soonest Expiration', value: (p) => licenses(p)?.soonestExpiration ?? '' },
-  );
-  for (let i = 1; i <= SURELC_EXPORT_RESIDENT_STATE_SLOTS; i += 1) {
-    cols.push({
-      header: `SureLC License Resident State ${i}`,
-      value: (p) => licenses(p)?.residentStates?.[i - 1] ?? '',
-    });
-  }
-  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
-    cols.push(
-      {
-        header: `SureLC License Status ${i}`,
-        value: (p) => licenses(p)?.byStatus?.[i - 1]?.status ?? '',
-      },
-      {
-        header: `SureLC License Status Count ${i}`,
-        value: (p) => licenses(p)?.byStatus?.[i - 1]?.count ?? '',
-      },
-    );
-  }
-
-  cols.push(
-    { header: 'SureLC Appointments Total', value: (p) => appointments(p)?.total ?? '' },
-    { header: 'SureLC Appointments Appointed Carriers', value: (p) => appointments(p)?.appointedCarriers ?? '' },
-    { header: 'SureLC Appointments Terminated Carriers', value: (p) => appointments(p)?.terminatedCarriers ?? '' },
-  );
-  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
-    cols.push(
-      {
-        header: `SureLC Appointment Status ${i}`,
-        value: (p) => appointments(p)?.byStatus?.[i - 1]?.status ?? '',
-      },
-      {
-        header: `SureLC Appointment Status Count ${i}`,
-        value: (p) => appointments(p)?.byStatus?.[i - 1]?.count ?? '',
-      },
-    );
-  }
-  for (let i = 1; i <= SURELC_EXPORT_TOP_CARRIER_SLOTS; i += 1) {
-    cols.push(
-      {
-        header: `SureLC Appointment Top Carrier ${i} ID`,
-        value: (p) => appointments(p)?.byCarrierTop?.[i - 1]?.carrierId ?? '',
-      },
-      {
-        header: `SureLC Appointment Top Carrier ${i} Total`,
-        value: (p) => appointments(p)?.byCarrierTop?.[i - 1]?.total ?? '',
-      },
-    );
-  }
-
-  cols.push(
-    { header: 'SureLC Contracts Total', value: (p) => contracts(p)?.total ?? '' },
-    { header: 'SureLC Contracts Active Carriers', value: (p) => contracts(p)?.activeCarriers ?? '' },
-  );
-  for (let i = 1; i <= SURELC_EXPORT_STATUS_SLOTS; i += 1) {
-    cols.push(
-      {
-        header: `SureLC Contract Status ${i}`,
-        value: (p) => contracts(p)?.byStatus?.[i - 1]?.status ?? '',
-      },
-      {
-        header: `SureLC Contract Status Count ${i}`,
-        value: (p) => contracts(p)?.byStatus?.[i - 1]?.count ?? '',
-      },
-    );
-  }
-  for (let i = 1; i <= SURELC_EXPORT_TOP_CARRIER_SLOTS; i += 1) {
-    cols.push(
-      {
-        header: `SureLC Contract Top Carrier ${i} ID`,
-        value: (p) => contracts(p)?.byCarrierTop?.[i - 1]?.carrierId ?? '',
-      },
-      {
-        header: `SureLC Contract Top Carrier ${i} Total`,
-        value: (p) => contracts(p)?.byCarrierTop?.[i - 1]?.total ?? '',
-      },
-    );
-  }
+  cols.push(...viewColumns('Equita', 'EQUITA'));
+  cols.push(...viewColumns('Quility', 'QUILITY'));
 
   return cols;
 })();

@@ -185,6 +185,7 @@ async function buildView(baseUrl, cred, identifiers) {
   try {
     const result = await fetchAll(baseUrl, cred.token, identifiers);
     const endpoints = result.endpoints || {};
+    const includeEndpoints = Boolean(cred?.includeEndpoints);
     const producerResolved = result.producerId || identifiers.producerId || null;
     const lookupClass = classifyLookupStatus(endpoints);
 
@@ -196,6 +197,7 @@ async function buildView(baseUrl, cred, identifiers) {
         identifiers: { npn: identifiers.npn || null, producerId: producerResolved },
         fetchedAt: new Date().toISOString(),
         summary: buildSummary(endpoints, { npn: identifiers.npn || null, producerId: producerResolved }),
+        endpoints: includeEndpoints ? redactEndpoints(endpoints) : undefined,
         endpointsMeta: Object.fromEntries(
           Object.entries(endpoints).map(([key, value]) => [
             key,
@@ -248,6 +250,7 @@ async function buildView(baseUrl, cred, identifiers) {
       fetchedAt: new Date().toISOString(),
       hint:
         errorCode === 'ACCESS_DENIED' ? blockedHint : undefined,
+      endpoints: includeEndpoints ? redactEndpoints(endpoints) : undefined,
       endpointsMeta: Object.fromEntries(
         Object.entries(endpoints).map(([key, value]) => [
           key,
@@ -330,6 +333,39 @@ function redactPII(value) {
     }
   }
   return out;
+}
+
+function includeEndpointsFromQuery(query) {
+  const truthy = (value) => {
+    const normalized = String(value ?? '').trim().toLowerCase();
+    return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'y';
+  };
+
+  if (truthy(query?.includeEndpoints) || truthy(query?.endpoints) || truthy(query?.raw)) return true;
+
+  const include = String(query?.include ?? '').trim().toLowerCase();
+  if (!include) return false;
+  const parts = include
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return parts.includes('endpoints') || parts.includes('endpoint') || parts.includes('raw') || parts.includes('all');
+}
+
+function redactEndpoints(endpoints) {
+  if (!endpoints || typeof endpoints !== 'object') return undefined;
+  return Object.fromEntries(
+    Object.entries(endpoints).map(([key, value]) => {
+      if (!value || typeof value !== 'object') return [key, value];
+      return [
+        key,
+        {
+          ...value,
+          body: redactPII(value.body),
+        },
+      ];
+    }),
+  );
 }
 
 function isInvalidCredential401(view) {
@@ -733,6 +769,7 @@ export default async function handler(req, res) {
     const mode = String(req.query?.mode || req.query?.view || 'single').toLowerCase();
     const nocacheRaw = String(req.query?.nocache ?? req.query?.noCache ?? req.query?.refresh ?? '').toLowerCase();
     const noCache = nocacheRaw === '1' || nocacheRaw === 'true' || nocacheRaw === 'yes';
+    const includeEndpoints = includeEndpointsFromQuery(req.query);
 
     if (!npn && !producerId) {
       res.statusCode = 400;
@@ -746,6 +783,7 @@ export default async function handler(req, res) {
       producerId: producerId || null,
       which: String(which).toUpperCase(),
       mode,
+      includeEndpoints,
     });
     const now = Date.now();
     if (!noCache) {
@@ -773,8 +811,8 @@ export default async function handler(req, res) {
 
       // Run both in parallel.
       const [quilityView, equitaView] = await Promise.all([
-        buildView(baseUrl, { label: 'QUILITY', token: quilityCred.token }, identifiers),
-        buildView(baseUrl, { label: 'EQUITA', token: equitaCred.token }, identifiers),
+        buildView(baseUrl, { label: 'QUILITY', token: quilityCred.token, includeEndpoints }, identifiers),
+        buildView(baseUrl, { label: 'EQUITA', token: equitaCred.token, includeEndpoints }, identifiers),
       ]);
 
       const payload = {
@@ -809,6 +847,7 @@ export default async function handler(req, res) {
       try {
         const result = await fetchAll(baseUrl, cand.token, { npn: npn || null, producerId: producerId || null });
         const endpoints = result.endpoints || {};
+        const endpointsRedacted = includeEndpoints ? redactEndpoints(endpoints) : undefined;
         const anyOk = Object.values(endpoints).some((r) => r && typeof r === 'object' && r.ok);
         const producerResolved = result.producerId || producerId || null;
 
@@ -843,6 +882,7 @@ export default async function handler(req, res) {
           identifiers: { npn: npn || null, producerId: producerResolved },
           fetchedAt: new Date().toISOString(),
           summary: buildSummary(endpoints, { npn: npn || null, producerId: producerResolved }),
+          endpoints: endpointsRedacted,
           endpointsMeta: Object.fromEntries(
             Object.entries(endpoints).map(([key, value]) => [
               key,
