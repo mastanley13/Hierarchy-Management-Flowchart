@@ -771,6 +771,30 @@
   color: #50608a;
 }
 
+.upline-modal__hint--error {
+  color: #b42318;
+}
+
+.upline-modal__edit-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.upline-modal__input {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  background: rgba(15, 23, 42, 0.02);
+  color: #0f172a;
+  font-size: 0.9rem;
+}
+
+.upline-modal__input:disabled {
+  opacity: 0.6;
+}
+
 .upline-modal__field {
   display: flex;
   flex-direction: column;

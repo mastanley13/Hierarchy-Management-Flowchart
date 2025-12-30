@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useMemo, useRef, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -6,6 +6,7 @@ import ReactFlow, {
   type Edge,
   type Node,
   ReactFlowInstance,
+  useReactFlow,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
 import NodeCard from './NodeCard';
@@ -37,6 +38,8 @@ type HierarchyCanvasProps = {
   childPageIndex: number;
   childrenPageSize: number;
   showAllChildren: boolean;
+  childPageOverrides?: ReadonlyMap<string, number> | null;
+  focusNonce?: number;
   minZoom?: number;
 };
 
@@ -66,6 +69,8 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
   childPageIndex,
   childrenPageSize,
   showAllChildren,
+  childPageOverrides = null,
+  focusNonce = 0,
   minZoom,
 }, ref) => {
   const layout = useElkLayout({ density });
@@ -101,7 +106,10 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
         if (node.childrenIds.length > 0 && expandedIds.has(id) && canGoDeeper) {
           const shouldPaginate = !showAllChildren && node.childrenIds.length > childrenPageSize;
           const totalPages = shouldPaginate ? Math.ceil(node.childrenIds.length / childrenPageSize) : 1;
-          const windowIndex = shouldPaginate ? Math.min(childPageIndex, Math.max(totalPages - 1, 0)) : 0;
+          const overrideIndex = shouldPaginate ? childPageOverrides?.get(id) : undefined;
+          const windowIndex = shouldPaginate
+            ? Math.min(overrideIndex ?? childPageIndex, Math.max(totalPages - 1, 0))
+            : 0;
           const startIndex = shouldPaginate ? windowIndex * childrenPageSize : 0;
           const visibleChildren = shouldPaginate
             ? node.childrenIds.slice(startIndex, startIndex + childrenPageSize)
@@ -112,7 +120,17 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
     };
     visit(startRootIds, 0);
     return items;
-  }, [graph.rootIds, graph.nodesById, expandedIds, depthLimit, scopeRootId, childPageIndex, childrenPageSize, showAllChildren]);
+  }, [
+    graph.rootIds,
+    graph.nodesById,
+    expandedIds,
+    depthLimit,
+    scopeRootId,
+    childPageIndex,
+    childrenPageSize,
+    showAllChildren,
+    childPageOverrides,
+  ]);
 
   const baseNodes = useMemo<Node[]>(
     () =>
@@ -205,6 +223,29 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
     };
   }, [layout, baseNodes, baseEdges]);
 
+  const FocusOnSelection = ({ activeNodeId }: { activeNodeId: string | null }) => {
+    const { setCenter, getViewport } = useReactFlow();
+    const lastCenteredNonceRef = useRef<number | null>(null);
+
+    useEffect(() => {
+      if (!activeNodeId) return;
+      if (lastCenteredNonceRef.current === focusNonce) return;
+
+      const targetNode = flowNodes.find((node) => node.id === activeNodeId);
+      if (!targetNode) return;
+
+      const viewport = getViewport();
+      setCenter(
+        targetNode.position.x + (targetNode.width ?? 0) / 2,
+        targetNode.position.y + (targetNode.height ?? 0) / 2,
+        { duration: 500, zoom: viewport.zoom },
+      );
+      lastCenteredNonceRef.current = focusNonce;
+    }, [activeNodeId, focusNonce, flowNodes, getViewport, setCenter]);
+
+    return null;
+  };
+
   return (
     <div className="hierarchy-canvas" ref={ref}>
       <ReactFlow
@@ -227,6 +268,7 @@ const HierarchyCanvas = forwardRef<HTMLDivElement, HierarchyCanvasProps>(({
         minZoom={effectiveMinZoom}
         maxZoom={CANVAS_MAX_ZOOM}
       >
+        <FocusOnSelection activeNodeId={selectedNodeId} />
         <Background gap={24} color={theme === 'light' ? '#e5e7eb' : '#1f2532'} />
         <Controls />
         <MiniMap pannable zoomable maskColor={theme === 'light' ? 'rgba(255,255,255,0.7)' : 'rgba(14, 17, 23, 0.7)'} nodeColor={() => '#60f5a1'} />

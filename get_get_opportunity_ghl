@@ -1,0 +1,35 @@
+{
+  "opportunity": {
+    "id": "gVSO2sCNIvUl9B6dMogt",
+    "name": "Adriana Gutierrez",
+    "monetaryValue": 0,
+    "pipelineId": "5wZcpF9DDfUZA0WgWGRC",
+    "pipelineStageId": "aa181645-f2b0-44e5-8e13-90f82886c869",
+    "status": "open",
+    "source": "Unlicensed Intake",
+    "lastStatusChangeAt": "2025-12-29T23:44:23.226Z",
+    "lastStageChangeAt": "2025-12-29T23:44:23.226Z",
+    "createdAt": "2025-12-29T23:44:23.226Z",
+    "updatedAt": "2025-12-29T23:44:23.671Z",
+    "contactId": "iegyjVwkzFN78nIlRJAh",
+    "isAttribute": true,
+    "internalSource": {
+      "apiVersion": "2021-04-15",
+      "source": "WORKFLOW_NEW",
+      "channel": "ISTIO_MESH",
+      "type": "CREATED",
+      "id": "5cba18fb-f6c5-427b-9cf3-b49128e5d9ad"
+    },
+    "locationId": "nEEiHT9n7OPxFnBZIycg",
+    "lastActionDate": "2025-12-29T23:44:23.655Z",
+    "followers": [],
+    "contact": {
+      "id": "iegyjVwkzFN78nIlRJAh",
+      "name": "Adriana Gutierrez",
+      "email": "agshiesty16@gmail.com",
+      "tags": [],
+      "followers": []
+    }
+  },
+  "traceId": "be979312-9c0e-4e21-af6a-5d559a70feb6"
+}

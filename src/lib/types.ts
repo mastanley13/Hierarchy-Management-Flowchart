@@ -313,6 +313,7 @@ export type GHLHierarchyNode = {
     uplineEmail: string | null;
     uplineName: string | null;
     uplineHighestStage: string | null;
+    name?: string | null;
     surelcId: string | null;
   };
   children: GHLHierarchyNode[];

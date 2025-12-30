@@ -1,0 +1,77 @@
+{
+  "pipelines": [
+    {
+      "stages": [
+        {
+          "id": "cb431e38-f3bb-4bb0-abd2-0b3aad5ec5d6",
+          "name": "No Profile",
+          "originId": "NDQ2MTVhZGQtN2JhMy00MzliLWJjYWQtZGQ4NjY2NWVlNDEw",
+          "position": 0,
+          "showInFunnel": true,
+          "showInPieChart": true
+        },
+        {
+          "id": "be0a4517-2e5f-489b-816e-de5edf4c8452",
+          "name": "At Producer",
+          "originId": "ZTAzNzFlNjItZmI0My00Nzg3LThkNjAtMTE5NWNmOGY3MjE1",
+          "position": 1,
+          "showInFunnel": true,
+          "showInPieChart": true
+        },
+        {
+          "id": "6c5f5b5f-8148-4b04-a9c6-b97c76271765",
+          "name": "At BGA",
+          "originId": "ZDdhMjgwMzAtZGU0Ny00OTI2LWIxNjItMGE4YzliNWJlNThk",
+          "position": 2,
+          "showInFunnel": true,
+          "showInPieChart": true
+        },
+        {
+          "id": "c9d91717-60bf-42d3-b276-45839f8da5b7",
+          "name": "At Carrier",
+          "originId": "NDM3Mzk0NjktY2QwYS00NTU3LWI0ZDktNjI3MzQ5YzlhMGY1",
+          "position": 3,
+          "showInFunnel": true,
+          "showInPieChart": true
+        }
+      ],
+      "dateAdded": "2025-09-24T14:38:15.188Z",
+      "dateUpdated": "2025-09-24T14:38:15.188Z",
+      "name": "Onboarding — Agent",
+      "originId": "AkeeXi8EqiL3cCSnGhhX",
+      "id": "fugCAw3Y03xjWH7u2nN4"
+    },
+    {
+      "stages": [
+        {
+          "id": "aa181645-f2b0-44e5-8e13-90f82886c869",
+          "name": "XCEL Info Sent",
+          "position": 0,
+          "showInFunnel": true,
+          "showInPieChart": true
+        },
+        {
+          "id": "7ba58b83-e3f7-4618-aa14-c37f9be3eddd",
+          "name": "XCEL Purchased and Started",
+          "position": 1,
+          "showInFunnel": true,
+          "showInPieChart": true
+        },
+        {
+          "id": "9784bcfc-7e13-4119-a3f8-0637809bbd34",
+          "name": "XCEL Completed (NPN Needed for Contract)",
+          "position": 2,
+          "showInFunnel": true,
+          "showInPieChart": true
+        }
+      ],
+      "dateAdded": "2025-09-24T17:08:29.532Z",
+      "dateUpdated": "2025-09-24T17:11:02.945Z",
+      "name": "XCEL Testing",
+      "showInFunnel": true,
+      "showInPieChart": true,
+      "id": "5wZcpF9DDfUZA0WgWGRC"
+    }
+  ],
+  "traceId": "3eb32fa4-7252-43f4-9279-f946a64452e4"
+}

@@ -9,33 +9,44 @@ export default defineConfig({
       name: 'ghl-dev-api',
       apply: 'serve',
       configureServer(server) {
+        const runServerless = async (modulePath: string, req: any, res: any) => {
+          const mod = await import(modulePath);
+          const handler = (mod as any).default || mod;
+
+          const r = res as any;
+          if (typeof r.status !== 'function') {
+            r.status = function (code: number) {
+              this.statusCode = code;
+              return this;
+            };
+          }
+          if (typeof r.json !== 'function') {
+            r.json = function (payload: any) {
+              try { this.setHeader('Content-Type', 'application/json'); } catch {}
+              this.end(JSON.stringify(payload));
+              return this;
+            };
+          }
+          // Populate req.query from the URL for compatibility
+          try {
+            const u = new URL(req.url!, 'http://localhost');
+            req.query = Object.fromEntries(u.searchParams.entries());
+          } catch {}
+
+          await handler(req as any, r);
+        };
+
+        const readBody = async (req: any): Promise<string> => {
+          const chunks: Buffer[] = [];
+          for await (const chunk of req) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+          }
+          return Buffer.concat(chunks).toString('utf8');
+        };
+
         server.middlewares.use('/api/ghl/snapshot', async (req, res) => {
           try {
-            const mod = await import('./api/ghl/snapshot.js');
-            const handler = (mod as any).default || mod;
-
-            // Shim Express-like helpers expected by the handler
-            const r = res as any;
-            if (typeof r.status !== 'function') {
-              r.status = function (code: number) {
-                this.statusCode = code;
-                return this;
-              };
-            }
-            if (typeof r.json !== 'function') {
-              r.json = function (payload: any) {
-                try { this.setHeader('Content-Type', 'application/json'); } catch {}
-                this.end(JSON.stringify(payload));
-                return this;
-              };
-            }
-            // Populate req.query from the URL for compatibility
-            try {
-              const u = new URL(req.url!, 'http://localhost');
-              (req as any).query = Object.fromEntries(u.searchParams.entries());
-            } catch {}
-
-            await handler(req as any, r);
+            await runServerless('./api/ghl/snapshot.js', req as any, res as any);
           } catch (err: any) {
             res.statusCode = 500;
             try { res.setHeader('Content-Type', 'application/json'); } catch {}
@@ -43,32 +54,33 @@ export default defineConfig({
           }
         });
 
+        // Dev-only middleware to serve our serverless contact update handler at /api/ghl/update-upline-producer-id
+        server.middlewares.use('/api/ghl/update-upline-producer-id', async (req, res) => {
+          try {
+            if (req.method && req.method !== 'POST' && req.method !== 'OPTIONS') {
+              res.statusCode = 405;
+              try { res.setHeader('Content-Type', 'application/json'); } catch {}
+              res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+              return;
+            }
+
+            if (req.method === 'POST') {
+              const bodyText = await readBody(req);
+              (req as any).body = bodyText;
+            }
+
+            await runServerless('./api/ghl/update-upline-producer-id.js', req as any, res as any);
+          } catch (err: any) {
+            res.statusCode = 500;
+            try { res.setHeader('Content-Type', 'application/json'); } catch {}
+            res.end(JSON.stringify({ error: 'Dev update failed', details: String(err?.message || err) }));
+          }
+        });
+
         // Dev-only middleware for serverless SureLC contact fetcher (prevents /api proxy rewrite)
         server.middlewares.use('/api/surelc/producer', async (req, res) => {
           try {
-            const mod = await import('./api/surelc/producer.js');
-            const handler = (mod as any).default || mod;
-
-            const r = res as any;
-            if (typeof r.status !== 'function') {
-              r.status = function (code: number) {
-                this.statusCode = code;
-                return this;
-              };
-            }
-            if (typeof r.json !== 'function') {
-              r.json = function (payload: any) {
-                try { this.setHeader('Content-Type', 'application/json'); } catch {}
-                this.end(JSON.stringify(payload));
-                return this;
-              };
-            }
-            try {
-              const u = new URL(req.url!, 'http://localhost');
-              (req as any).query = Object.fromEntries(u.searchParams.entries());
-            } catch {}
-
-            await handler(req as any, r);
+            await runServerless('./api/surelc/producer.js', req as any, res as any);
           } catch (err: any) {
             res.statusCode = 500;
             try { res.setHeader('Content-Type', 'application/json'); } catch {}

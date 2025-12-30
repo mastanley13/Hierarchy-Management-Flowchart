@@ -1,15 +1,18 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { X, Copy, ExternalLink } from 'lucide-react';
 import type {
   GHLHierarchyNode,
   GHLCustomFieldDefinition,
 } from '../lib/types';
+import { normalizeUplineProducerIdInput, updateUplineProducerId } from '../lib/ghlApi';
 
 type ContactDetailsModalProps = {
   node: GHLHierarchyNode | null;
   definitions: GHLCustomFieldDefinition[];
   path?: GHLHierarchyNode[];
   onClose: () => void;
+  canEditUplineProducerId?: boolean;
+  onUplineProducerIdSaved?: () => void | Promise<void>;
 };
 
 type FieldEntry = {
@@ -122,7 +125,14 @@ const ContactDetailsModal: React.FC<ContactDetailsModalProps> = ({
   definitions,
   path = [],
   onClose,
+  canEditUplineProducerId = true,
+  onUplineProducerIdSaved,
 }) => {
+  const [uplineProducerIdDraft, setUplineProducerIdDraft] = useState('');
+  const [uplineProducerIdSaving, setUplineProducerIdSaving] = useState(false);
+  const [uplineProducerIdError, setUplineProducerIdError] = useState<string | null>(null);
+  const [uplineProducerIdSaved, setUplineProducerIdSaved] = useState(false);
+
   const definitionByKey = useMemo(() => {
     const map = new Map<string, GHLCustomFieldDefinition>();
     definitions.forEach((def) => {
@@ -183,6 +193,19 @@ const ContactDetailsModal: React.FC<ContactDetailsModalProps> = ({
 
   useEffect(() => {
     if (!node) return;
+    const current =
+      node.customFields?.['contact.upline_producer_id'] ||
+      node.customFields?.['contact.onboarding__upline_npn'] ||
+      node.raw?.uplineProducerId ||
+      '';
+
+    setUplineProducerIdDraft(normalizeUplineProducerIdInput(String(current)));
+    setUplineProducerIdError(null);
+    setUplineProducerIdSaved(false);
+  }, [node]);
+
+  useEffect(() => {
+    if (!node) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         onClose();
@@ -212,6 +235,28 @@ const ContactDetailsModal: React.FC<ContactDetailsModalProps> = ({
     const payload = JSON.stringify(node.customFields, null, 2);
     if (navigator?.clipboard?.writeText) {
       navigator.clipboard.writeText(payload).catch(() => {});
+    }
+  };
+
+  const canEditThisNode =
+    canEditUplineProducerId &&
+    Boolean(node.id) &&
+    !node.id.startsWith('upline:');
+
+  const handleSaveUplineProducerId = async () => {
+    if (!canEditThisNode) return;
+    setUplineProducerIdSaving(true);
+    setUplineProducerIdError(null);
+    setUplineProducerIdSaved(false);
+    try {
+      const cleaned = normalizeUplineProducerIdInput(uplineProducerIdDraft);
+      await updateUplineProducerId(node.id, cleaned.length > 0 ? cleaned : null);
+      setUplineProducerIdSaved(true);
+      await onUplineProducerIdSaved?.();
+    } catch (err) {
+      setUplineProducerIdError(err instanceof Error ? err.message : 'Failed to update');
+    } finally {
+      setUplineProducerIdSaving(false);
     }
   };
 
@@ -292,6 +337,54 @@ const ContactDetailsModal: React.FC<ContactDetailsModalProps> = ({
               <span className="upline-modal__summary-label">Total Downline</span>
               <span>{node.metrics.descendantCount}</span>
             </div>
+          </div>
+        </section>
+
+        <section className="upline-modal__section">
+          <div className="upline-modal__section-head">
+            <h3>Upline Producer ID</h3>
+            <div className="upline-modal__actions">
+              {uplineProducerIdSaved && <span className="upline-modal__hint">Saved</span>}
+              {uplineProducerIdError && (
+                <span className="upline-modal__hint upline-modal__hint--error">{uplineProducerIdError}</span>
+              )}
+            </div>
+          </div>
+          <div className="upline-modal__hint">
+            Current: {normalizeValue(node.customFields?.['contact.upline_producer_id'] ?? node.customFields?.['contact.onboarding__upline_npn'] ?? node.raw?.uplineProducerId)}
+          </div>
+          <div className="upline-modal__edit-row">
+            <input
+              className="upline-modal__input"
+              value={uplineProducerIdDraft}
+              onChange={(event) => {
+                setUplineProducerIdSaved(false);
+                setUplineProducerIdDraft(event.target.value);
+              }}
+              onBlur={() => setUplineProducerIdDraft((prev) => normalizeUplineProducerIdInput(prev))}
+              inputMode="numeric"
+              placeholder={normalizeValue(node.customFields?.['contact.upline_producer_id'] ?? node.customFields?.['contact.onboarding__upline_npn'] ?? node.raw?.uplineProducerId) !== 'N/A'
+                ? normalizeValue(node.customFields?.['contact.upline_producer_id'] ?? node.customFields?.['contact.onboarding__upline_npn'] ?? node.raw?.uplineProducerId)
+                : 'Enter upline NPN'}
+              disabled={!canEditThisNode || uplineProducerIdSaving}
+              aria-label="Upline Producer ID"
+            />
+            <button
+              type="button"
+              className="upline-modal__action"
+              onClick={handleSaveUplineProducerId}
+              disabled={!canEditThisNode || uplineProducerIdSaving}
+            >
+              {uplineProducerIdSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          {!canEditThisNode && (
+            <div className="upline-modal__hint">
+              Editing is disabled for this node.
+            </div>
+          )}
+          <div className="upline-modal__hint">
+            Updates `contact.upline_producer_id` in HighLevel and refreshes the hierarchy.
           </div>
         </section>
 

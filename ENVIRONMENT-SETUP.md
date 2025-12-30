@@ -48,6 +48,14 @@ Now run the API test again:
 1. **Browser Console**: `debugAdminSets.testHierarchyUploadStatus()`
 2. **Debug Panel**: Click "Test Hierarchy Upload Status" button
 
+## Optional: Smoke-test the Quility SureLC link
+
+If you just want to confirm the Quility deep-link URL is responding and resolving (no credentials needed):
+
+```bash
+npm run test:surelc:quility-link
+```
+
 ## Credential Types
 
 ### Equita Account (Recommended)

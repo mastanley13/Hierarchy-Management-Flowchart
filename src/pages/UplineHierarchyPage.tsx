@@ -504,6 +504,8 @@ const UplineHierarchyPage = () => {
         node={activeContact}
         definitions={snapshot?.customFieldDefs ?? []}
         path={activePath}
+        canEditUplineProducerId={!useMock}
+        onUplineProducerIdSaved={fetchSnapshot}
         onClose={() => setActiveContact(null)}
       />
     </div>

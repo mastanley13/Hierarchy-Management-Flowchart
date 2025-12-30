@@ -65,6 +65,8 @@ loadEnvFallback();
 const HL_API_BASE = (process.env.HL_API_BASE || 'https://services.leadconnectorhq.com').trim();
 const HL_PRIVATE_API_KEY = (process.env.HL_PRIVATE_API_KEY || '').trim() || undefined;
 const HL_LOCATION_ID = (process.env.HL_LOCATION_ID || '').trim() || undefined;
+const HL_ONBOARDING_PIPELINE_ID = (process.env.HL_ONBOARDING_PIPELINE_ID || '').trim() || undefined;
+const HL_ONBOARDING_PIPELINE_NAME = (process.env.HL_ONBOARDING_PIPELINE_NAME || 'Onboarding — Agent').trim();
 const RAW_PAGE_SIZE = Number.parseInt(process.env.HL_PAGE_SIZE || '100', 10);
 const PAGE_SIZE = Number.isNaN(RAW_PAGE_SIZE)
   ? 100
@@ -122,6 +124,13 @@ const normalizeDigits = (value) =>
       ? String(value).replace(/\D+/g, '')
       : '';
 
+const normalizeText = (value) =>
+  String(value || '')
+    .replace(/[–—]/g, '-')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+
 const ROOT_UPLINE_NPN = normalizeDigits(process.env.HL_ROOT_UPLINE_NPN || '18550335');
 
 
@@ -134,6 +143,123 @@ const normalizeEmail = (value) =>
 const safeTrim = (value) =>
 
   typeof value === 'string' ? value.trim() : '';
+
+const hasUpper = (value) => /[A-Z]/.test(value);
+
+const hasLower = (value) => /[a-z]/.test(value);
+
+const hasLetters = (value) => /[A-Za-z]/.test(value);
+
+const looksLikeAutoCasedName = (value) => {
+  const trimmed = safeTrim(value);
+  if (!trimmed) return false;
+  if (!hasLetters(trimmed)) return false;
+  // Don't touch emails / IDs / obvious synthetic fallbacks.
+  if (trimmed.includes('@')) return false;
+  if (/^Contact\\s+\\w+$/i.test(trimmed)) return false;
+  // If mixed-case is already present, assume it was intentionally entered.
+  return !(hasUpper(trimmed) && hasLower(trimmed));
+};
+
+const titleCaseToken = (token, isFirstWord) => {
+  const lower = token.toLowerCase();
+
+  // Preserve common suffixes / numerals.
+  const fixedUpper = new Map([
+    ['i', 'I'],
+    ['ii', 'II'],
+    ['iii', 'III'],
+    ['iv', 'IV'],
+    ['v', 'V'],
+    ['vi', 'VI'],
+    ['vii', 'VII'],
+    ['viii', 'VIII'],
+    ['ix', 'IX'],
+    ['x', 'X'],
+    ['xi', 'XI'],
+    ['xii', 'XII'],
+    ['jr', 'Jr'],
+    ['sr', 'Sr'],
+    ['esq', 'Esq'],
+  ]);
+  if (fixedUpper.has(lower)) return fixedUpper.get(lower);
+
+  const lowerParticles = new Set([
+    'de',
+    'da',
+    'del',
+    'della',
+    'der',
+    'van',
+    'von',
+    'la',
+    'le',
+    'du',
+    'di',
+    'dos',
+    'das',
+    'bin',
+    'ibn',
+    'al',
+  ]);
+  if (!isFirstWord && lowerParticles.has(lower)) return lower;
+
+  // McDonald style prefixes.
+  if (lower.startsWith('mc') && lower.length > 2 && /[a-z]/.test(lower[2])) {
+    return `Mc${lower[2].toUpperCase()}${lower.slice(3)}`;
+  }
+
+  return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
+};
+
+const smartTitleCase = (value) => {
+  const input = safeTrim(value);
+  if (!input) return '';
+
+  return input
+    .split(/\s+/g)
+    .filter(Boolean)
+    .map((word, wordIndex) => {
+      const match = word.match(/^([^A-Za-z0-9]*)([A-Za-z0-9][A-Za-z0-9'’.-]*)([^A-Za-z0-9]*)$/);
+      if (!match) return word;
+
+      const [, prefix, coreRaw, suffix] = match;
+      const dotMatch = coreRaw.match(/^(.*?)(\.+)$/);
+      const core = dotMatch ? dotMatch[1] : coreRaw;
+      const dots = dotMatch ? dotMatch[2] : '';
+
+      if (!hasLetters(core)) {
+        return `${prefix}${coreRaw}${suffix}`;
+      }
+
+      const isFirstWord = wordIndex === 0;
+
+      const hyphenParts = core.split('-').map((hyPart, hyIndex) => {
+        const apostropheParts = hyPart.split(/(['’])/);
+        let rendered = '';
+        for (let i = 0; i < apostropheParts.length; i += 1) {
+          const part = apostropheParts[i];
+          if (part === '\'' || part === '’') {
+            rendered += part;
+            continue;
+          }
+          if (!part) continue;
+          rendered += titleCaseToken(part, isFirstWord && hyIndex === 0 && i === 0);
+        }
+        return rendered;
+      });
+
+      return `${prefix}${hyphenParts.join('-')}${dots}${suffix}`;
+    })
+    .join(' ');
+};
+
+const formatContactDisplayName = (value) => {
+  const trimmed = safeTrim(value);
+  if (!trimmed) return '';
+  if (!looksLikeAutoCasedName(trimmed)) return trimmed;
+  return smartTitleCase(trimmed);
+};
 
 
 
@@ -157,6 +283,7 @@ const buildSyntheticUplineNode = (uplineProducerId) => {
     firstName: 'Upline',
     lastName: uplineProducerId,
     name: label,
+    nameRaw: label,
     companyName: null,
     email: null,
     emailDisplay: null,
@@ -316,6 +443,168 @@ async function fetchCustomFields() {
 }
 
 
+const extractPipelineItems = (payload) => {
+
+  if (!payload) return [];
+
+  if (Array.isArray(payload)) return payload;
+
+  if (Array.isArray(payload?.pipelines)) return payload.pipelines;
+
+  if (Array.isArray(payload?.items)) return payload.items;
+
+  if (Array.isArray(payload?.data)) return payload.data;
+
+  if (Array.isArray(payload?.pipelines?.pipelines)) return payload.pipelines.pipelines;
+
+  return [];
+
+};
+
+
+const extractPipelineStages = (pipeline) => {
+
+  if (!pipeline) return [];
+
+  const candidates = [
+
+    pipeline.stages,
+
+    pipeline.pipelineStages,
+
+    pipeline.pipeline_stages,
+
+    pipeline.pipeline_stages?.stages,
+
+    pipeline.stages?.stages,
+
+    pipeline.stages?.items,
+
+    pipeline.pipelineStages?.items,
+
+  ];
+
+  for (const candidate of candidates) {
+
+    if (Array.isArray(candidate)) return candidate;
+
+  }
+
+  return [];
+
+};
+
+
+const buildStageNameById = (pipeline) => {
+
+  const map = new Map();
+
+  extractPipelineStages(pipeline).forEach((stage) => {
+
+    const id = stage?.id ?? stage?._id ?? stage?.stageId ?? stage?.stage_id ?? null;
+
+    const name = stage?.name ?? stage?.label ?? stage?.title ?? null;
+
+    if (!id || !name) return;
+
+    map.set(String(id), String(name));
+
+  });
+
+  return map;
+
+};
+
+
+const findOnboardingPipeline = (pipelines) => {
+
+  if (!Array.isArray(pipelines) || pipelines.length === 0) return null;
+
+
+  if (HL_ONBOARDING_PIPELINE_ID) {
+
+    const direct = pipelines.find((p) => String(p?.id ?? p?._id ?? '') === String(HL_ONBOARDING_PIPELINE_ID));
+
+    if (direct) return direct;
+
+  }
+
+
+  const desired = normalizeText(HL_ONBOARDING_PIPELINE_NAME);
+
+  const byName = pipelines.find((p) => normalizeText(p?.name ?? p?.title ?? p?.label ?? '') === desired);
+
+  if (byName) return byName;
+
+
+  const fuzzy = pipelines.find((p) => {
+
+    const name = normalizeText(p?.name ?? p?.title ?? p?.label ?? '');
+
+    return name.includes('onboard') && name.includes('agent');
+
+  });
+
+  return fuzzy || null;
+
+};
+
+
+async function fetchOpportunityPipelines() {
+
+  const initialUrls = [
+
+    `/opportunities/pipelines?locationId=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+    `/opportunities/pipelines?location_id=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+    `/opportunities/pipelines/?locationId=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+    `/opportunities/pipelines/?location_id=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+    `/pipelines?locationId=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+    `/pipelines?location_id=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+    `/pipelines/?locationId=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+    `/pipelines/?location_id=${encodeURIComponent(HL_LOCATION_ID)}`,
+
+  ];
+
+
+  let lastError = null;
+
+  for (const initialUrl of initialUrls) {
+
+    try {
+
+      const payload = await fetchWithRetry(initialUrl);
+
+      const pipelines = extractPipelineItems(payload);
+
+      return pipelines;
+
+    } catch (error) {
+
+      lastError = error;
+
+      const status = error?.status;
+
+      if (status === 400 || status === 404 || status === 422) continue;
+
+      throw error;
+
+    }
+
+  }
+
+
+  throw lastError || new Error('Failed to fetch opportunity pipelines');
+
+}
+
+
 
 async function fetchAllOpportunities() {
 
@@ -446,6 +735,29 @@ const extractOpportunityContactId = (opportunity) => {
 };
 
 
+const extractOpportunityPipelineId = (opportunity) => {
+
+  const direct = opportunity?.pipelineId ?? opportunity?.pipeline_id ?? opportunity?.pipeline ?? null;
+
+  if (typeof direct === 'string') return direct;
+
+  if (typeof direct === 'number') return String(direct);
+
+  if (direct && typeof direct === 'object') {
+
+    const nested = direct.id ?? direct._id ?? direct.pipelineId ?? direct.pipeline_id ?? null;
+
+    if (typeof nested === 'string') return nested;
+
+    if (typeof nested === 'number') return String(nested);
+
+  }
+
+  return null;
+
+};
+
+
 
 const buildOpportunitySummary = (opportunity, customFieldsMap) => {
 
@@ -493,7 +805,9 @@ const buildOpportunitySummary = (opportunity, customFieldsMap) => {
 
 
 
-const buildOpportunityIndex = (rawOpportunities, customFieldsMap) => {
+const buildOpportunityIndex = (rawOpportunities, customFieldsMap, options = {}) => {
+
+  const pipelineFilter = options?.pipelineId ? String(options.pipelineId) : null;
 
   const byContactId = new Map();
 
@@ -504,6 +818,14 @@ const buildOpportunityIndex = (rawOpportunities, customFieldsMap) => {
     const contactId = extractOpportunityContactId(opportunity);
 
     if (!contactId) return;
+
+    if (pipelineFilter) {
+
+      const pipelineId = extractOpportunityPipelineId(opportunity);
+
+      if (!pipelineId || String(pipelineId) !== pipelineFilter) return;
+
+    }
 
 
 
@@ -679,19 +1001,19 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
     const uplineCodeQuility = isTruthy(custom['contact.upline_code_quility']);
 
 
+    const rawDisplayName =
+      contact.contactName
+      || [contact.firstNameRaw || contact.firstName, contact.lastNameRaw || contact.lastName].filter(Boolean).join(' ')
+      || contact.email
+      || `Contact ${contact.id.slice(-6)}`;
 
     const node = {
       id: contact.id,
       contactId: contact.id,
       firstName: contact.firstNameRaw || contact.firstName || '',
       lastName: contact.lastNameRaw || contact.lastName || '',
-      name: contact.contactName
-
-        || [contact.firstNameRaw || contact.firstName, contact.lastNameRaw || contact.lastName].filter(Boolean).join(' ')
-
-        || contact.email
-
-        || `Contact ${contact.id.slice(-6)}`,
+      nameRaw: rawDisplayName,
+      name: formatContactDisplayName(rawDisplayName),
 
       companyName: contact.companyName || null,
 
@@ -824,6 +1146,59 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
       entry.push(syntheticNode.id);
       npnIndex.set(uplineId, entry);
     }
+  });
+
+  const scoreNodeForIndex = (nodeId) => {
+    const node = nodesById.get(nodeId);
+    if (!node) return -1_000_000;
+
+    let score = 0;
+    if (!node.isSynthetic) score += 10_000;
+
+    if (node.email) score += 200;
+    if (node.emailDisplay) score += 50;
+    if (node.phone) score += 50;
+    if (node.companyName) score += 25;
+
+    if (node.uplineProducerIdRaw) score += 400;
+    if (node.uplineEmailRaw) score += 100;
+    if (node.uplineNameRaw) score += 25;
+
+    if (node.flags?.licensed) score += 15;
+    if (node.flags?.xcelStarted) score += 5;
+    if (node.flags?.xcelPaid) score += 5;
+
+    return score;
+  };
+
+  const sortIndexIds = (ids) =>
+    ids
+      .slice()
+      .sort((a, b) => {
+        const scoreDiff = scoreNodeForIndex(b) - scoreNodeForIndex(a);
+        if (scoreDiff !== 0) return scoreDiff;
+
+        const nameA = nodesById.get(a)?.name || '';
+        const nameB = nodesById.get(b)?.name || '';
+        const nameDiff = nameA.localeCompare(nameB);
+        if (nameDiff !== 0) return nameDiff;
+
+        return String(a).localeCompare(String(b));
+      });
+
+  npnIndex.forEach((ids, key) => {
+    if (ids.length <= 1) return;
+    npnIndex.set(key, sortIndexIds(ids));
+  });
+
+  surelcIndex.forEach((ids, key) => {
+    if (ids.length <= 1) return;
+    surelcIndex.set(key, sortIndexIds(ids));
+  });
+
+  emailIndex.forEach((ids, key) => {
+    if (ids.length <= 1) return;
+    emailIndex.set(key, sortIndexIds(ids));
   });
 
   const fallbackRootCandidates = npnIndex.get(ROOT_UPLINE_NPN);
@@ -1048,6 +1423,18 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
   });
 
 
+  const stageNameById = options?.stageNameById || null;
+  if (stageNameById && stageNameById.size > 0) {
+    nodes.forEach((node) => {
+      const stageId = node?.opportunity?.pipelineStageId || null;
+      const stageName = stageId ? (stageNameById.get(String(stageId)) || null) : null;
+      if (stageName) {
+        node.uplineHighestStage = stageName;
+      }
+    });
+  }
+
+
 
   const buildTree = (nodeId, level = 1) => {
 
@@ -1200,6 +1587,8 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
         uplineName: node.uplineNameRaw || null,
 
         uplineHighestStage: node.uplineHighestStage || null,
+
+        name: node.nameRaw || null,
 
         surelcId: node.surelcRaw || null,
 
@@ -1361,13 +1750,25 @@ export default async function handler(req, res) {
     );
 
 
-    const [customFields, contacts, opportunities] = await Promise.all([
+    const [customFields, contacts, opportunities, opportunityPipelines] = await Promise.all([
 
       fetchCustomFields(),
 
       fetchAllContacts(),
 
-      includeOpportunities ? fetchAllOpportunities() : Promise.resolve([]),
+      includeOpportunities
+        ? fetchAllOpportunities().catch((error) => {
+          console.warn('Snapshot: opportunity fetch failed, continuing without opportunities', error?.message || error);
+          return [];
+        })
+        : Promise.resolve([]),
+
+      includeOpportunities
+        ? fetchOpportunityPipelines().catch((error) => {
+          console.warn('Snapshot: pipeline fetch failed, continuing without pipeline metadata', error?.message || error);
+          return [];
+        })
+        : Promise.resolve([]),
 
     ]);
 
@@ -1585,13 +1986,30 @@ export default async function handler(req, res) {
 
 
 
+    let onboardingPipelineId = HL_ONBOARDING_PIPELINE_ID ? String(HL_ONBOARDING_PIPELINE_ID) : null;
+    let stageNameById = new Map();
+
+    if (includeOpportunities && Array.isArray(opportunityPipelines) && opportunityPipelines.length > 0) {
+      const onboardingPipeline = findOnboardingPipeline(opportunityPipelines);
+      if (onboardingPipeline) {
+        const resolvedId = onboardingPipeline?.id ?? onboardingPipeline?._id ?? null;
+        if (resolvedId) onboardingPipelineId = String(resolvedId);
+        stageNameById = buildStageNameById(onboardingPipeline);
+      }
+    }
+
+
     const snapshot = buildSnapshot(contacts, customFields.byId, {
 
       customFieldItems: customFields.contactItems,
 
       opportunityCustomFieldItems: customFields.opportunityItems,
 
-      opportunitiesByContactId: includeOpportunities ? buildOpportunityIndex(opportunities, customFields.byId) : new Map(),
+      opportunitiesByContactId: includeOpportunities
+        ? buildOpportunityIndex(opportunities, customFields.byId, { pipelineId: onboardingPipelineId || undefined })
+        : new Map(),
+
+      stageNameById,
 
     });
 
