@@ -21,7 +21,7 @@ import {
 import { toPng, toSvg } from 'html-to-image';
 import { getNodesBounds, getViewportForBounds, type ReactFlowInstance } from 'reactflow';
 import type { GHLHierarchyNode, GHLSnapshot } from '../lib/types';
-import { normalizeUplineProducerIdInput, updateUplineProducerId } from '../lib/ghlApi';
+import { normalizeUplineProducerIdInput, updateCarrierFields, updateUplineProducerId } from '../lib/ghlApi';
 import HierarchyCanvas, { CANVAS_FIT_VIEW_PADDING, CANVAS_MIN_ZOOM } from '../components/hierarchy/HierarchyCanvas';
 import { CollapsibleSection } from '../components/hierarchy/CollapsibleSection';
 import {
@@ -47,6 +47,8 @@ const SCOPE_STORAGE_KEY = 'visual-hierarchy-scope-root';
 const CHILDREN_PAGE_SIZE = 8;
 const SURELC_DEMO_LINK_ENABLED = false;
 const UPLINE_PRODUCER_FIELD_LABEL = 'Upline NPN ID';
+const CARRIER_COMPANY_NAME_FIELD_LABEL = 'Carrier Company Name';
+const CARRIER_AGENT_NUMBER_FIELD_LABEL = 'Carrier Agent Number';
 
 type SurelcEndpointResult = {
   ok: boolean;
@@ -496,6 +498,16 @@ const VisualHierarchyPage: React.FC = () => {
 
   const canEditSelectedNodeUplineProducerId = Boolean(selectedNode?.id) && !String(selectedNode?.id).startsWith('upline:');
 
+  const [carrierCompanyNameDraft, setCarrierCompanyNameDraft] = useState('');
+  const [carrierCompanyNameSaving, setCarrierCompanyNameSaving] = useState(false);
+  const [carrierCompanyNameError, setCarrierCompanyNameError] = useState<string | null>(null);
+  const [carrierCompanyNameSaved, setCarrierCompanyNameSaved] = useState(false);
+
+  const [carrierAgentNumberDraft, setCarrierAgentNumberDraft] = useState('');
+  const [carrierAgentNumberSaving, setCarrierAgentNumberSaving] = useState(false);
+  const [carrierAgentNumberError, setCarrierAgentNumberError] = useState<string | null>(null);
+  const [carrierAgentNumberSaved, setCarrierAgentNumberSaved] = useState(false);
+
   useEffect(() => {
     if (!selectedNode) {
       setUplineProducerIdDraft('');
@@ -513,6 +525,32 @@ const VisualHierarchyPage: React.FC = () => {
     setUplineProducerIdDraft(normalizeUplineProducerIdInput(String(current)));
     setUplineProducerIdError(null);
     setUplineProducerIdSaved(false);
+  }, [selectedNodeId, selectedNode]);
+
+  useEffect(() => {
+    if (!selectedNode) {
+      setCarrierCompanyNameDraft('');
+      setCarrierCompanyNameError(null);
+      setCarrierCompanyNameSaved(false);
+
+      setCarrierAgentNumberDraft('');
+      setCarrierAgentNumberError(null);
+      setCarrierAgentNumberSaved(false);
+      return;
+    }
+
+    const currentCarrierCompanyName =
+      selectedNode.sourceNode.customFields?.['contact.carrier_company_name'] ?? '';
+    const currentCarrierAgentNumber =
+      selectedNode.sourceNode.customFields?.['contact.carrier_agent_number'] ?? '';
+
+    setCarrierCompanyNameDraft(String(currentCarrierCompanyName ?? ''));
+    setCarrierCompanyNameError(null);
+    setCarrierCompanyNameSaved(false);
+
+    setCarrierAgentNumberDraft(String(currentCarrierAgentNumber ?? ''));
+    setCarrierAgentNumberError(null);
+    setCarrierAgentNumberSaved(false);
   }, [selectedNodeId, selectedNode]);
 
   const saveSelectedNodeUplineProducerId = useCallback(async () => {
@@ -540,6 +578,64 @@ const VisualHierarchyPage: React.FC = () => {
     selectedNode,
     uplineProducerIdDraft,
     uplineProducerIdSaving,
+  ]);
+
+  const saveSelectedNodeCarrierCompanyName = useCallback(async () => {
+    if (!selectedNode) return;
+    if (!canEditSelectedNodeUplineProducerId) return;
+    if (carrierCompanyNameSaving) return;
+
+    setCarrierCompanyNameSaving(true);
+    setCarrierCompanyNameError(null);
+    setCarrierCompanyNameSaved(false);
+
+    try {
+      const cleaned = carrierCompanyNameDraft.trim();
+      await updateCarrierFields(selectedNode.id, {
+        carrierCompanyName: cleaned.length > 0 ? cleaned : null,
+      });
+      setCarrierCompanyNameSaved(true);
+      await fetchSnapshot();
+    } catch (err) {
+      setCarrierCompanyNameError(err instanceof Error ? err.message : 'Failed to update');
+    } finally {
+      setCarrierCompanyNameSaving(false);
+    }
+  }, [
+    canEditSelectedNodeUplineProducerId,
+    carrierCompanyNameDraft,
+    carrierCompanyNameSaving,
+    fetchSnapshot,
+    selectedNode,
+  ]);
+
+  const saveSelectedNodeCarrierAgentNumber = useCallback(async () => {
+    if (!selectedNode) return;
+    if (!canEditSelectedNodeUplineProducerId) return;
+    if (carrierAgentNumberSaving) return;
+
+    setCarrierAgentNumberSaving(true);
+    setCarrierAgentNumberError(null);
+    setCarrierAgentNumberSaved(false);
+
+    try {
+      const cleaned = carrierAgentNumberDraft.trim();
+      await updateCarrierFields(selectedNode.id, {
+        carrierAgentNumber: cleaned.length > 0 ? cleaned : null,
+      });
+      setCarrierAgentNumberSaved(true);
+      await fetchSnapshot();
+    } catch (err) {
+      setCarrierAgentNumberError(err instanceof Error ? err.message : 'Failed to update');
+    } finally {
+      setCarrierAgentNumberSaving(false);
+    }
+  }, [
+    canEditSelectedNodeUplineProducerId,
+    carrierAgentNumberDraft,
+    carrierAgentNumberSaving,
+    fetchSnapshot,
+    selectedNode,
   ]);
 
   const selectedNodeInfo = useMemo(() => {
@@ -645,6 +741,14 @@ const VisualHierarchyPage: React.FC = () => {
           if (flags?.quilityProfile) return 'Quility';
           return '-';
         })()
+      },
+      {
+        label: CARRIER_COMPANY_NAME_FIELD_LABEL,
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.carrier_company_name')),
+      },
+      {
+        label: CARRIER_AGENT_NUMBER_FIELD_LABEL,
+        value: formatFieldValue(readCustomField(selectedNode, 'contact.carrier_agent_number')),
       },
     ];
 
@@ -2224,21 +2328,93 @@ const VisualHierarchyPage: React.FC = () => {
                   <CollapsibleSection title="Contact Information" defaultOpen={true} badge={selectedNodeInfo?.contactInfo.length}>
                     <div className="visual-hierarchy-inspector__details">
                       {selectedNodeInfo?.contactInfo.map((field) => (
-                        <div key={field.label} className="visual-hierarchy-inspector__detail-row">
-                          <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
-                          {field.link ? (
-                            <a
-                              href={field.link}
-                              className="visual-hierarchy-inspector__detail-value visual-hierarchy-inspector__detail-value--link"
-                            >
-                              {field.value}
-                            </a>
-                          ) : (
-                            <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
-                              {field.value}
+                        field.label === CARRIER_COMPANY_NAME_FIELD_LABEL ? (
+                          <div key={field.label} className="visual-hierarchy-inspector__detail-row visual-hierarchy-inspector__detail-row--wide">
+                            <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                            <span className="visual-hierarchy-inspector__detail-value">
+                              Current: {field.value}
                             </span>
-                          )}
-                        </div>
+                            <div className="visual-hierarchy-inspector__detail-edit">
+                              <input
+                                className="visual-hierarchy-inspector__input"
+                                value={carrierCompanyNameDraft}
+                                onChange={(event) => {
+                                  setCarrierCompanyNameSaved(false);
+                                  setCarrierCompanyNameDraft(event.target.value);
+                                }}
+                                placeholder={String(field.value) !== '-' ? String(field.value) : 'Enter carrier company name'}
+                                disabled={!canEditSelectedNodeUplineProducerId || carrierCompanyNameSaving}
+                                aria-label="Carrier Company Name"
+                              />
+                              <button
+                                type="button"
+                                className="visual-hierarchy-inspector__btn"
+                                onClick={saveSelectedNodeCarrierCompanyName}
+                                disabled={!canEditSelectedNodeUplineProducerId || carrierCompanyNameSaving}
+                              >
+                                {carrierCompanyNameSaving ? 'Savingƒ?İ' : 'Save'}
+                              </button>
+                            </div>
+                            {carrierCompanyNameError ? (
+                              <span className="visual-hierarchy-inspector__detail-value is-warning">{carrierCompanyNameError}</span>
+                            ) : carrierCompanyNameSaved ? (
+                              <span className="visual-hierarchy-inspector__detail-value is-accent">Saved</span>
+                            ) : !canEditSelectedNodeUplineProducerId ? (
+                              <span className="visual-hierarchy-inspector__detail-value is-muted">Synthetic node</span>
+                            ) : null}
+                          </div>
+                        ) : field.label === CARRIER_AGENT_NUMBER_FIELD_LABEL ? (
+                          <div key={field.label} className="visual-hierarchy-inspector__detail-row visual-hierarchy-inspector__detail-row--wide">
+                            <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                            <span className="visual-hierarchy-inspector__detail-value">
+                              Current: {field.value}
+                            </span>
+                            <div className="visual-hierarchy-inspector__detail-edit">
+                              <input
+                                className="visual-hierarchy-inspector__input"
+                                value={carrierAgentNumberDraft}
+                                onChange={(event) => {
+                                  setCarrierAgentNumberSaved(false);
+                                  setCarrierAgentNumberDraft(event.target.value);
+                                }}
+                                placeholder={String(field.value) !== '-' ? String(field.value) : 'Enter carrier agent number'}
+                                disabled={!canEditSelectedNodeUplineProducerId || carrierAgentNumberSaving}
+                                aria-label="Carrier Agent Number"
+                              />
+                              <button
+                                type="button"
+                                className="visual-hierarchy-inspector__btn"
+                                onClick={saveSelectedNodeCarrierAgentNumber}
+                                disabled={!canEditSelectedNodeUplineProducerId || carrierAgentNumberSaving}
+                              >
+                                {carrierAgentNumberSaving ? 'Savingƒ?İ' : 'Save'}
+                              </button>
+                            </div>
+                            {carrierAgentNumberError ? (
+                              <span className="visual-hierarchy-inspector__detail-value is-warning">{carrierAgentNumberError}</span>
+                            ) : carrierAgentNumberSaved ? (
+                              <span className="visual-hierarchy-inspector__detail-value is-accent">Saved</span>
+                            ) : !canEditSelectedNodeUplineProducerId ? (
+                              <span className="visual-hierarchy-inspector__detail-value is-muted">Synthetic node</span>
+                            ) : null}
+                          </div>
+                        ) : (
+                          <div key={field.label} className="visual-hierarchy-inspector__detail-row">
+                            <span className="visual-hierarchy-inspector__detail-label">{field.label}</span>
+                            {field.link ? (
+                              <a
+                                href={field.link}
+                                className="visual-hierarchy-inspector__detail-value visual-hierarchy-inspector__detail-value--link"
+                              >
+                                {field.value}
+                              </a>
+                            ) : (
+                              <span className={`visual-hierarchy-inspector__detail-value ${field.tone ? `is-${field.tone}` : ''}`}>
+                                {field.value}
+                              </span>
+                            )}
+                          </div>
+                        )
                       ))}
                     </div>
                   </CollapsibleSection>

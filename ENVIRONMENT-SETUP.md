@@ -56,6 +56,17 @@ If you just want to confirm the Quility deep-link URL is responding and resolvin
 npm run test:surelc:quility-link
 ```
 
+## Optional: Force the Visual Hierarchy top parent (HighLevel)
+
+If the Visual Hierarchy shows the wrong top contact (often caused by duplicated NPNs in HighLevel), set one of these in your project root `.env`:
+
+```env
+# Preferred: pin the exact root contact
+HL_ROOT_CONTACT_EMAIL=mraychouni@ffl-ol.com
+# or
+# HL_ROOT_CONTACT_ID=your_ghl_contact_id
+```
+
 ## Credential Types
 
 ### Equita Account (Recommended)

@@ -77,6 +77,7 @@ const MAX_OPPORTUNITIES = Number.parseInt(process.env.HL_MAX_OPPORTUNITIES || '5
 const RATE_LIMIT_DELAY_MS = 200;
 const MAX_RETRIES = 5;
 const SYNTHETIC_UPLINE_PREFIX = 'upline:';
+const NPN_GROUP_PREFIX = 'npn-group:';
 
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -132,6 +133,8 @@ const normalizeText = (value) =>
     .trim();
 
 const ROOT_UPLINE_NPN = normalizeDigits(process.env.HL_ROOT_UPLINE_NPN || '18550335');
+const ROOT_CONTACT_ID = (process.env.HL_ROOT_CONTACT_ID || '').trim();
+const ROOT_CONTACT_EMAIL = (process.env.HL_ROOT_CONTACT_EMAIL || '').trim();
 
 
 const normalizeEmail = (value) =>
@@ -143,74 +146,6 @@ const normalizeEmail = (value) =>
 const safeTrim = (value) =>
 
   typeof value === 'string' ? value.trim() : '';
-
-const hasUpper = (value) => /[A-Z]/.test(value);
-
-const hasLower = (value) => /[a-z]/.test(value);
-
-const hasLetters = (value) => /[A-Za-z]/.test(value);
-
-const looksLikeAutoCasedName = (value) => {
-  const trimmed = safeTrim(value);
-  if (!trimmed) return false;
-  if (!hasLetters(trimmed)) return false;
-  // Don't touch emails / IDs / obvious synthetic fallbacks.
-  if (trimmed.includes('@')) return false;
-  if (/^Contact\\s+\\w+$/i.test(trimmed)) return false;
-  // If mixed-case is already present, assume it was intentionally entered.
-  return !(hasUpper(trimmed) && hasLower(trimmed));
-};
-
-const titleCaseToken = (token, isFirstWord) => {
-  const lower = token.toLowerCase();
-
-  // Preserve common suffixes / numerals.
-  const fixedUpper = new Map([
-    ['i', 'I'],
-    ['ii', 'II'],
-    ['iii', 'III'],
-    ['iv', 'IV'],
-    ['v', 'V'],
-    ['vi', 'VI'],
-    ['vii', 'VII'],
-    ['viii', 'VIII'],
-    ['ix', 'IX'],
-    ['x', 'X'],
-    ['xi', 'XI'],
-    ['xii', 'XII'],
-    ['jr', 'Jr'],
-    ['sr', 'Sr'],
-    ['esq', 'Esq'],
-  ]);
-  if (fixedUpper.has(lower)) return fixedUpper.get(lower);
-
-  const lowerParticles = new Set([
-    'de',
-    'da',
-    'del',
-    'della',
-    'der',
-    'van',
-    'von',
-    'la',
-    'le',
-    'du',
-    'di',
-    'dos',
-    'das',
-    'bin',
-    'ibn',
-    'al',
-  ]);
-  if (!isFirstWord && lowerParticles.has(lower)) return lower;
-
-  // McDonald style prefixes.
-  if (lower.startsWith('mc') && lower.length > 2 && /[a-z]/.test(lower[2])) {
-    return `Mc${lower[2].toUpperCase()}${lower.slice(3)}`;
-  }
-
-  return `${lower.charAt(0).toUpperCase()}${lower.slice(1)}`;
-};
 
 const smartTitleCase = (value) => {
   const input = safeTrim(value);
@@ -283,7 +218,6 @@ const buildSyntheticUplineNode = (uplineProducerId) => {
     firstName: 'Upline',
     lastName: uplineProducerId,
     name: label,
-    nameRaw: label,
     companyName: null,
     email: null,
     emailDisplay: null,
@@ -350,7 +284,10 @@ const ensureConfig = () => {
 
 
 
-async function fetchWithRetry(pathOrUrl, attempt = 0) {
+async function fetchWithRetry(pathOrUrl, optionsOrAttempt = 0, maybeAttempt = 0) {
+  const hasOptions = typeof optionsOrAttempt === 'object' && optionsOrAttempt !== null;
+  const options = hasOptions ? optionsOrAttempt : {};
+  const attempt = hasOptions ? maybeAttempt : optionsOrAttempt;
 
   const url = pathOrUrl.startsWith('http')
 
@@ -358,9 +295,13 @@ async function fetchWithRetry(pathOrUrl, attempt = 0) {
 
     : `${HL_API_BASE}${pathOrUrl}`;
 
-
+  const method = String(options?.method || 'GET').toUpperCase();
+  const body = Object.prototype.hasOwnProperty.call(options, 'body')
+    ? JSON.stringify(options.body)
+    : undefined;
 
   const res = await fetch(url, {
+    method,
 
     headers: {
 
@@ -375,6 +316,7 @@ async function fetchWithRetry(pathOrUrl, attempt = 0) {
       'Content-Type': 'application/json',
 
     },
+    body,
 
   });
 
@@ -384,7 +326,9 @@ async function fetchWithRetry(pathOrUrl, attempt = 0) {
 
     await sleep(RATE_LIMIT_DELAY_MS * (attempt + 1));
 
-    return fetchWithRetry(pathOrUrl, attempt + 1);
+    return hasOptions
+      ? fetchWithRetry(pathOrUrl, options, attempt + 1)
+      : fetchWithRetry(pathOrUrl, attempt + 1);
 
   }
 
@@ -875,29 +819,35 @@ async function fetchAllContacts() {
 
   const contacts = [];
 
-  let nextUrl = `/contacts/?locationId=${encodeURIComponent(HL_LOCATION_ID)}&limit=${PAGE_SIZE}`;
+  let page = 1;
+  let total = Number.POSITIVE_INFINITY;
 
+  while (contacts.length < MAX_CONTACTS && page < 10_000) {
+    const payload = await fetchWithRetry('/contacts/search', {
+      method: 'POST',
+      body: {
+        locationId: HL_LOCATION_ID,
+        page,
+        pageLimit: PAGE_SIZE,
+      },
+    });
 
+    const chunk = Array.isArray(payload?.contacts) ? payload.contacts : [];
+    contacts.push(...chunk);
 
-  while (nextUrl && contacts.length < MAX_CONTACTS) {
-
-    const payload = await fetchWithRetry(nextUrl);
-
-    if (Array.isArray(payload?.contacts)) {
-
-      contacts.push(...payload.contacts);
-
+    if (Number.isFinite(payload?.total)) {
+      total = payload.total;
     }
 
-    const nextPageUrl = payload?.meta?.nextPageUrl;
+    if (chunk.length === 0 || contacts.length >= total) {
+      break;
+    }
 
-    nextUrl = nextPageUrl ? nextPageUrl : null;
-
+    page += 1;
+    await sleep(RATE_LIMIT_DELAY_MS);
   }
 
-
-
-  return contacts;
+  return contacts.slice(0, MAX_CONTACTS);
 
 }
 
@@ -1000,20 +950,17 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
     const uplineCodeQuility = isTruthy(custom['contact.upline_code_quility']);
 
-
-    const rawDisplayName =
-      contact.contactName
-      || [contact.firstNameRaw || contact.firstName, contact.lastNameRaw || contact.lastName].filter(Boolean).join(' ')
-      || contact.email
-      || `Contact ${contact.id.slice(-6)}`;
+    const displayName = [contact.firstNameRaw || contact.firstName, contact.lastNameRaw || contact.lastName]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
 
     const node = {
       id: contact.id,
       contactId: contact.id,
       firstName: contact.firstNameRaw || contact.firstName || '',
       lastName: contact.lastNameRaw || contact.lastName || '',
-      nameRaw: rawDisplayName,
-      name: formatContactDisplayName(rawDisplayName),
+      name: displayName || contact.contactName || contact.email || `Contact ${contact.id.slice(-6)}`,
 
       companyName: contact.companyName || null,
 
@@ -1201,19 +1148,46 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
     emailIndex.set(key, sortIndexIds(ids));
   });
 
+  const isLikelyTestRootCandidate = (candidateNode) => {
+    if (!candidateNode) return false;
+    const normalizedName = normalizeText(candidateNode.name || '');
+    const normalizedLicensingState = normalizeText(candidateNode.licensingState || '');
+    return normalizedName.includes('test') || normalizedLicensingState === 'test';
+  };
+
   const fallbackRootCandidates = npnIndex.get(ROOT_UPLINE_NPN);
+  const normalizedRootEmail = normalizeEmail(ROOT_CONTACT_EMAIL);
   let fallbackRootId = null;
-  if (Array.isArray(fallbackRootCandidates)) {
-    for (const id of fallbackRootCandidates) {
-      const candidateNode = nodesById.get(id);
-      if (candidateNode && !candidateNode.isSynthetic) {
-        fallbackRootId = id;
-        break;
+
+  if (ROOT_CONTACT_ID && nodesById.has(ROOT_CONTACT_ID)) {
+    const candidateNode = nodesById.get(ROOT_CONTACT_ID);
+    if (candidateNode && !candidateNode.isSynthetic) {
+      fallbackRootId = ROOT_CONTACT_ID;
+    }
+  }
+
+  if (!fallbackRootId && normalizedRootEmail) {
+    const emailCandidates = emailIndex.get(normalizedRootEmail);
+    if (Array.isArray(emailCandidates)) {
+      for (const id of emailCandidates) {
+        const candidateNode = nodesById.get(id);
+        if (candidateNode && !candidateNode.isSynthetic) {
+          fallbackRootId = id;
+          break;
+        }
       }
     }
-    if (!fallbackRootId) {
-      fallbackRootId = fallbackRootCandidates[0] || null;
-    }
+  }
+
+  if (!fallbackRootId && Array.isArray(fallbackRootCandidates)) {
+    const nonSyntheticCandidates = fallbackRootCandidates.filter((id) => {
+      const candidateNode = nodesById.get(id);
+      return candidateNode && !candidateNode.isSynthetic;
+    });
+
+    const nonTestCandidates = nonSyntheticCandidates.filter((id) => !isLikelyTestRootCandidate(nodesById.get(id)));
+
+    fallbackRootId = nonTestCandidates[0] || nonSyntheticCandidates[0] || fallbackRootCandidates[0] || null;
   }
 
   const duplicateNpnSet = new Set();
@@ -1240,6 +1214,102 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
   const uplineNotFoundSet = new Set();
 
   const cycleBreakSet = new Set();
+
+  const getUniqueCandidate = (ids, selfId) => {
+    if (!Array.isArray(ids)) return { candidate: null, ambiguous: false };
+    const candidates = ids.filter((id) => id !== selfId);
+    if (candidates.length === 1) return { candidate: candidates[0], ambiguous: false };
+    if (candidates.length > 1) return { candidate: null, ambiguous: true };
+    return { candidate: null, ambiguous: false };
+  };
+
+  const npnGroupNodes = new Map();
+
+  const buildSyntheticNpnGroupNode = (npnValue, count) => {
+    const label = `NPN ${npnValue} (${count} record${count === 1 ? '' : 's'})`;
+    return {
+      id: `${NPN_GROUP_PREFIX}${npnValue}`,
+      contactId: null,
+      firstName: 'NPN',
+      lastName: String(npnValue),
+      nameRaw: label,
+      name: label,
+      companyName: null,
+      email: '',
+      emailDisplay: null,
+      phone: null,
+      source: 'synthetic',
+      npn: String(npnValue),
+      npnRaw: String(npnValue),
+      surelcId: '',
+      surelcRaw: '',
+      uplineProducerId: null,
+      uplineProducerIdRaw: null,
+      uplineEmail: null,
+      uplineEmailRaw: null,
+      uplineName: null,
+      uplineNameRaw: null,
+      uplineHighestStage: null,
+      aggregator: {
+        equita: false,
+        quility: false,
+      },
+      flags: {
+        licensed: false,
+        xcelAccountCreated: false,
+        xcelStarted: false,
+        xcelPaid: false,
+        equitaProfile: false,
+        quilityProfile: false,
+      },
+      licensingState: null,
+      compLevel: null,
+      compLevelNotes: null,
+      xcel: {
+        username: '',
+        tempPassword: '',
+        enrollmentDate: '',
+        dueDate: '',
+        lastTouch: '',
+      },
+      parentId: null,
+      uplineSource: 'synthetic',
+      uplineConfidence: 1,
+      children: [],
+      customFields: {},
+      opportunity: null,
+      isSynthetic: true,
+      syntheticKind: 'npn-group',
+    };
+  };
+
+  const ensureNpnGroupNode = (npnValue) => {
+    const key = String(npnValue || '');
+    if (!key) return null;
+    const existingId = npnGroupNodes.get(key);
+    if (existingId && nodesById.has(existingId)) return existingId;
+
+    const ids = npnIndex.get(key) || [];
+    if (!Array.isArray(ids) || ids.length <= 1) return null;
+
+    const realIds = ids.filter((id) => {
+      const node = nodesById.get(id);
+      return node && !node.isSynthetic;
+    });
+    if (realIds.length <= 1) return null;
+
+    const syntheticNode = buildSyntheticNpnGroupNode(key, realIds.length);
+    nodes.push(syntheticNode);
+    nodesById.set(syntheticNode.id, syntheticNode);
+    npnGroupNodes.set(key, syntheticNode.id);
+    return syntheticNode.id;
+  };
+
+  // Pre-create group nodes for duplicated NPNs so we can place them consistently.
+  npnIndex.forEach((ids, npnValue) => {
+    if (!Array.isArray(ids) || ids.length <= 1) return;
+    ensureNpnGroupNode(npnValue);
+  });
 
 
 
@@ -1301,7 +1371,10 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
     if (node.uplineProducerId) {
 
-      const candidateByNpn = findCandidate(npnIndex.get(node.uplineProducerId), node.id);
+      const { candidate: candidateByNpn, ambiguous: ambiguousByNpn } = getUniqueCandidate(
+        npnIndex.get(node.uplineProducerId),
+        node.id,
+      );
 
       if (candidateByNpn && !wouldIntroduceCycle(node.id, candidateByNpn)) {
 
@@ -1317,11 +1390,34 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
       }
 
+      if (!parentId && ambiguousByNpn) {
+        if (
+          fallbackRootId
+          && String(node.uplineProducerId) === String(ROOT_UPLINE_NPN)
+          && !wouldIntroduceCycle(node.id, fallbackRootId)
+        ) {
+          // Special-case: the configured root contact is the canonical target for the root NPN.
+          parentId = fallbackRootId;
+          source = 'npn';
+          confidence = 0.9;
+        } else {
+          const groupId = ensureNpnGroupNode(node.uplineProducerId);
+          if (groupId && !wouldIntroduceCycle(node.id, groupId)) {
+            parentId = groupId;
+            source = 'synthetic';
+            confidence = 0.8;
+          }
+        }
+      }
+
 
 
       if (!parentId) {
 
-        const candidateBySurelc = findCandidate(surelcIndex.get(node.uplineProducerId), node.id);
+        const { candidate: candidateBySurelc, ambiguous: ambiguousBySurelc } = getUniqueCandidate(
+          surelcIndex.get(node.uplineProducerId),
+          node.id,
+        );
 
         if (candidateBySurelc && !wouldIntroduceCycle(node.id, candidateBySurelc)) {
 
@@ -1335,6 +1431,25 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
           cycleBreakSet.add(node.id);
 
+        }
+
+        if (!parentId && ambiguousBySurelc) {
+          if (
+            fallbackRootId
+            && String(node.uplineProducerId) === String(ROOT_UPLINE_NPN)
+            && !wouldIntroduceCycle(node.id, fallbackRootId)
+          ) {
+            parentId = fallbackRootId;
+            source = 'npn';
+            confidence = 0.9;
+          } else {
+            const groupId = ensureNpnGroupNode(node.uplineProducerId);
+            if (groupId && !wouldIntroduceCycle(node.id, groupId)) {
+              parentId = groupId;
+              source = 'synthetic';
+              confidence = 0.8;
+            }
+          }
         }
 
       }
@@ -1387,6 +1502,57 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
 
 
+  // Place duplicated NPN contacts under a shared "NPN group" node when possible so they appear at the
+  // correct upline location without selecting a "best" record.
+  npnIndex.forEach((ids, npnValue) => {
+    if (!Array.isArray(ids) || ids.length <= 1) return;
+    const groupId = ensureNpnGroupNode(npnValue);
+    if (!groupId) return;
+
+    const groupNode = nodesById.get(groupId);
+    if (!groupNode) return;
+
+    const memberIds = ids.filter((id) => {
+      const member = nodesById.get(id);
+      return member && !member.isSynthetic && id !== groupId;
+    });
+
+    if (memberIds.length <= 1) return;
+
+    if (fallbackRootId && String(npnValue) === String(ROOT_UPLINE_NPN) && memberIds.includes(fallbackRootId)) {
+      // Moe stays as the top root contact; other duplicate records for Moe's NPN group under Moe.
+      groupNode.parentId = fallbackRootId;
+      memberIds.forEach((id) => {
+        if (id === fallbackRootId) return;
+        const member = nodesById.get(id);
+        if (!member) return;
+        if (!member.parentId || member.parentId === fallbackRootId) {
+          member.parentId = groupId;
+        }
+      });
+      return;
+    }
+
+    const parentSet = new Set(
+      memberIds
+        .map((id) => nodesById.get(id)?.parentId || null)
+        .filter((pid) => pid !== null),
+    );
+
+    if (parentSet.size > 1) {
+      // Inconsistent duplicate records (different uplines) - keep as-is.
+      return;
+    }
+
+    const sharedParentId = parentSet.size === 1 ? Array.from(parentSet)[0] : null;
+    groupNode.parentId = sharedParentId;
+    memberIds.forEach((id) => {
+      const member = nodesById.get(id);
+      if (!member) return;
+      member.parentId = groupId;
+    });
+  });
+
   if (fallbackRootId) {
     nodes.forEach((node) => {
       if (!node.parentId && node.id !== fallbackRootId) {
@@ -1421,6 +1587,18 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
     }
 
   });
+
+  if (fallbackRootId && roots.length > 1) {
+    roots.sort((a, b) => {
+      if (a === fallbackRootId) return -1;
+      if (b === fallbackRootId) return 1;
+      const nameA = nodesById.get(a)?.name || '';
+      const nameB = nodesById.get(b)?.name || '';
+      const nameDiff = nameA.localeCompare(nameB);
+      if (nameDiff !== 0) return nameDiff;
+      return String(a).localeCompare(String(b));
+    });
+  }
 
 
   const stageNameById = options?.stageNameById || null;
@@ -1461,6 +1639,11 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
 
     const tags = [];
+
+    if (node.isSynthetic && node.syntheticKind === 'npn-group') {
+      tags.push('Duplicate NPN');
+      tags.push('Needs Review');
+    }
 
     if (node.aggregator.equita) tags.push('Equita');
 
@@ -1587,8 +1770,6 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
         uplineName: node.uplineNameRaw || null,
 
         uplineHighestStage: node.uplineHighestStage || null,
-
-        name: node.nameRaw || null,
 
         surelcId: node.surelcRaw || null,
 

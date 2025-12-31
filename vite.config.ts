@@ -77,6 +77,29 @@ export default defineConfig({
           }
         });
 
+        // Dev-only middleware to serve our serverless carrier field update handler at /api/ghl/update-carrier-fields
+        server.middlewares.use('/api/ghl/update-carrier-fields', async (req, res) => {
+          try {
+            if (req.method && req.method !== 'POST' && req.method !== 'OPTIONS') {
+              res.statusCode = 405;
+              try { res.setHeader('Content-Type', 'application/json'); } catch {}
+              res.end(JSON.stringify({ error: 'Method Not Allowed' }));
+              return;
+            }
+
+            if (req.method === 'POST') {
+              const bodyText = await readBody(req);
+              (req as any).body = bodyText;
+            }
+
+            await runServerless('./api/ghl/update-carrier-fields.js', req as any, res as any);
+          } catch (err: any) {
+            res.statusCode = 500;
+            try { res.setHeader('Content-Type', 'application/json'); } catch {}
+            res.end(JSON.stringify({ error: 'Dev update failed', details: String(err?.message || err) }));
+          }
+        });
+
         // Dev-only middleware for serverless SureLC contact fetcher (prevents /api proxy rewrite)
         server.middlewares.use('/api/surelc/producer', async (req, res) => {
           try {
