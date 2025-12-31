@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, Copy, ExternalLink } from 'lucide-react';
+import { X, Copy, ExternalLink, Loader2, Save } from 'lucide-react';
 import type {
   GHLHierarchyNode,
   GHLCustomFieldDefinition,
@@ -371,11 +371,17 @@ const ContactDetailsModal: React.FC<ContactDetailsModalProps> = ({
             />
             <button
               type="button"
-              className="upline-modal__action"
+              className="upline-modal__action upline-modal__action--icon"
               onClick={handleSaveUplineProducerId}
               disabled={!canEditThisNode || uplineProducerIdSaving}
+              aria-label="Save Upline Producer ID"
+              title="Save Upline Producer ID"
             >
-              {uplineProducerIdSaving ? 'Saving…' : 'Save'}
+              {uplineProducerIdSaving ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Save size={16} />
+              )}
             </button>
           </div>
           {!canEditThisNode && (

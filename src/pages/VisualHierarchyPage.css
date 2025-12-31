@@ -912,6 +912,13 @@
   cursor: pointer;
 }
 
+.visual-hierarchy-inspector__btn--icon {
+  justify-content: center;
+  padding: 8px;
+  width: 36px;
+  flex-shrink: 0;
+}
+
 .visual-hierarchy-inspector__btn:disabled {
   opacity: 0.6;
   cursor: default;

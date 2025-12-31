@@ -761,6 +761,14 @@
   transition: background 0.15s ease, transform 0.15s ease;
 }
 
+.upline-modal__action--icon {
+  justify-content: center;
+  padding: 6px;
+  width: 34px;
+  gap: 0;
+  flex-shrink: 0;
+}
+
 .upline-modal__action:hover {
   background: rgba(12, 63, 244, 0.1);
   transform: translateY(-1px);

@@ -11,6 +11,8 @@ import {
   Download,
   Focus,
   FoldVertical,
+  Loader2,
+  Save,
   Scan,
   Search,
   Sparkles,
@@ -2063,11 +2065,17 @@ const VisualHierarchyPage: React.FC = () => {
                         />
                         <button
                           type="button"
-                          className="visual-hierarchy-inspector__btn"
+                          className="visual-hierarchy-inspector__btn visual-hierarchy-inspector__btn--icon"
                           onClick={saveSelectedNodeUplineProducerId}
                           disabled={!canEditSelectedNodeUplineProducerId || uplineProducerIdSaving}
+                          aria-label={`Save ${UPLINE_PRODUCER_FIELD_LABEL}`}
+                          title={`Save ${UPLINE_PRODUCER_FIELD_LABEL}`}
                         >
-                          {uplineProducerIdSaving ? 'Saving…' : 'Save'}
+                          {uplineProducerIdSaving ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <Save size={16} />
+                          )}
                         </button>
                       </div>
                       {uplineProducerIdError ? (
@@ -2348,11 +2356,17 @@ const VisualHierarchyPage: React.FC = () => {
                               />
                               <button
                                 type="button"
-                                className="visual-hierarchy-inspector__btn"
+                                className="visual-hierarchy-inspector__btn visual-hierarchy-inspector__btn--icon"
                                 onClick={saveSelectedNodeCarrierCompanyName}
                                 disabled={!canEditSelectedNodeUplineProducerId || carrierCompanyNameSaving}
+                                aria-label={`Save ${CARRIER_COMPANY_NAME_FIELD_LABEL}`}
+                                title={`Save ${CARRIER_COMPANY_NAME_FIELD_LABEL}`}
                               >
-                                {carrierCompanyNameSaving ? 'Savingƒ?İ' : 'Save'}
+                                {carrierCompanyNameSaving ? (
+                                  <Loader2 size={16} className="animate-spin" />
+                                ) : (
+                                  <Save size={16} />
+                                )}
                               </button>
                             </div>
                             {carrierCompanyNameError ? (
@@ -2383,11 +2397,17 @@ const VisualHierarchyPage: React.FC = () => {
                               />
                               <button
                                 type="button"
-                                className="visual-hierarchy-inspector__btn"
+                                className="visual-hierarchy-inspector__btn visual-hierarchy-inspector__btn--icon"
                                 onClick={saveSelectedNodeCarrierAgentNumber}
                                 disabled={!canEditSelectedNodeUplineProducerId || carrierAgentNumberSaving}
+                                aria-label={`Save ${CARRIER_AGENT_NUMBER_FIELD_LABEL}`}
+                                title={`Save ${CARRIER_AGENT_NUMBER_FIELD_LABEL}`}
                               >
-                                {carrierAgentNumberSaving ? 'Savingƒ?İ' : 'Save'}
+                                {carrierAgentNumberSaving ? (
+                                  <Loader2 size={16} className="animate-spin" />
+                                ) : (
+                                  <Save size={16} />
+                                )}
                               </button>
                             </div>
                             {carrierAgentNumberError ? (
@@ -2457,11 +2477,17 @@ const VisualHierarchyPage: React.FC = () => {
                               />
                               <button
                                 type="button"
-                                className="visual-hierarchy-inspector__btn"
+                                className="visual-hierarchy-inspector__btn visual-hierarchy-inspector__btn--icon"
                                 onClick={saveSelectedNodeUplineProducerId}
                                 disabled={!canEditSelectedNodeUplineProducerId || uplineProducerIdSaving}
+                                aria-label={`Save ${UPLINE_PRODUCER_FIELD_LABEL}`}
+                                title={`Save ${UPLINE_PRODUCER_FIELD_LABEL}`}
                               >
-                                {uplineProducerIdSaving ? 'Saving…' : 'Save'}
+                                {uplineProducerIdSaving ? (
+                                  <Loader2 size={16} className="animate-spin" />
+                                ) : (
+                                  <Save size={16} />
+                                )}
                               </button>
                             </div>
                             {uplineProducerIdError ? (
