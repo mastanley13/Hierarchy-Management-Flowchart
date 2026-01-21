@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
     "typecheck": "tsc --noEmit",
-    "test:surelc:quility-link": "node scripts/test-surelc-quility-link.mjs"
+    "test:surelc:quility-link": "node scripts/test-surelc-quility-link.mjs",
+    "report:surelc-access": "node scripts/surelc-access-report.mjs"
   },
   "dependencies": {
     "@types/d3": "^7.4.3",

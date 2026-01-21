@@ -8,6 +8,9 @@ yarn-error.log*
 dist/
 build/
 
+# Reports (may include PII)
+reports/
+
 # Environment variables
 .env
 .env.local
