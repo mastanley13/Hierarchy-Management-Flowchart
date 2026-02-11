@@ -116,6 +116,8 @@ const isTruthy = (value) => {
 
 };
 
+const EXCLUDE_TEST_UPLINE_CANDIDATES = isTruthy(process.env.HL_UPLINE_EXCLUDE_TEST_CANDIDATES || false);
+
 
 
 const normalizeDigits = (value) =>
@@ -1148,12 +1150,25 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
     emailIndex.set(key, sortIndexIds(ids));
   });
 
-  const isLikelyTestRootCandidate = (candidateNode) => {
-    if (!candidateNode) return false;
+  const isLikelyTestContact = (candidateNode) => {
+    if (!candidateNode || candidateNode.isSynthetic) return false;
     const normalizedName = normalizeText(candidateNode.name || '');
+    const normalizedFirstName = normalizeText(candidateNode.firstName || '');
+    const normalizedLastName = normalizeText(candidateNode.lastName || '');
     const normalizedLicensingState = normalizeText(candidateNode.licensingState || '');
-    return normalizedName.includes('test') || normalizedLicensingState === 'test';
+    const normalizedSource = normalizeText(candidateNode.source || '');
+    const normalizedEmail = normalizeEmail(candidateNode.email || candidateNode.emailDisplay || '');
+
+    return normalizedName.includes('test')
+      || normalizedFirstName.includes('test')
+      || normalizedLastName.includes('test')
+      || normalizedLicensingState === 'test'
+      || normalizedSource === 'test'
+      || normalizedEmail.includes('test')
+      || normalizedEmail.endsWith('@example.com');
   };
+
+  const isLikelyTestRootCandidate = (candidateNode) => isLikelyTestContact(candidateNode);
 
   const fallbackRootCandidates = npnIndex.get(ROOT_UPLINE_NPN);
   const normalizedRootEmail = normalizeEmail(ROOT_CONTACT_EMAIL);
@@ -1215,9 +1230,21 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
   const cycleBreakSet = new Set();
 
+  const filterCandidateIds = (ids, selfId) => {
+    if (!Array.isArray(ids)) return [];
+    return ids.filter((id) => {
+      if (id === selfId) return false;
+      if (!EXCLUDE_TEST_UPLINE_CANDIDATES) return true;
+
+      const candidateNode = nodesById.get(id);
+      if (!candidateNode || candidateNode.isSynthetic) return true;
+
+      return !isLikelyTestContact(candidateNode);
+    });
+  };
+
   const getUniqueCandidate = (ids, selfId) => {
-    if (!Array.isArray(ids)) return { candidate: null, ambiguous: false };
-    const candidates = ids.filter((id) => id !== selfId);
+    const candidates = filterCandidateIds(ids, selfId);
     if (candidates.length === 1) return { candidate: candidates[0], ambiguous: false };
     if (candidates.length > 1) return { candidate: null, ambiguous: true };
     return { candidate: null, ambiguous: false };
@@ -1340,16 +1367,9 @@ function buildSnapshot(rawContacts, customFieldsMap, options = {}) {
 
 
   const findCandidate = (ids, selfId) => {
-
-    if (!Array.isArray(ids)) return null;
-
-    for (const id of ids) {
-
-      if (id !== selfId) {
-
-        return id;
-
-      }
+    const candidates = filterCandidateIds(ids, selfId);
+    for (const id of candidates) {
+      return id;
 
     }
 

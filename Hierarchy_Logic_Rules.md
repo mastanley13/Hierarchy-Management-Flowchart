@@ -40,6 +40,7 @@ Root/fallback configuration:
 - `HL_ROOT_UPLINE_NPN` (default `18550335`)
 - `HL_ROOT_CONTACT_ID` (optional hard pin)
 - `HL_ROOT_CONTACT_EMAIL` (optional tie-breaker)
+- `HL_UPLINE_EXCLUDE_TEST_CANDIDATES` (optional; when enabled, likely test contacts are excluded as parent-match candidates)
 
 ## Normalization Rules
 
@@ -62,6 +63,7 @@ These indexes power parent selection.
 For each node, parent is assigned in this order:
 
 1. **Upline producer id -> NPN match (primary rule)**
+   - If `HL_UPLINE_EXCLUDE_TEST_CANDIDATES=1`, likely test contacts are removed from candidate matching first.
    - If `uplineProducerId` matches exactly one other contact NPN, parent = that contact.
    - `uplineSource = "npn"`, confidence `0.95`.
 
@@ -72,11 +74,13 @@ For each node, parent is assigned in this order:
 
 3. **Fallback to SureLC id matching**
    - If NPN matching failed, same `uplineProducerId` is attempted against `surelcIndex`.
+   - Candidate filtering for likely test contacts also applies here when flag is enabled.
    - If unique: `uplineSource = "surelc"`, confidence `0.85`.
    - Ambiguous handling mirrors duplicate behavior above (group node/root special case).
 
 4. **Email fallback (only when no upline producer id exists)**
    - If no `uplineProducerId` and `uplineEmail` exists, match by email.
+   - Candidate filtering for likely test contacts also applies here when flag is enabled.
    - `uplineSource = "email"`, confidence `0.6`.
 
 5. **Fallback root assignment**

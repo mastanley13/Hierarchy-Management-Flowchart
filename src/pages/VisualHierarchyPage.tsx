@@ -25,6 +25,7 @@ import { getNodesBounds, getViewportForBounds, type ReactFlowInstance } from 're
 import type { GHLHierarchyNode, GHLSnapshot } from '../lib/types';
 import { normalizeUplineProducerIdInput, updateCarrierFields, updateUplineProducerId } from '../lib/ghlApi';
 import HierarchyCanvas, { CANVAS_FIT_VIEW_PADDING, CANVAS_MIN_ZOOM } from '../components/hierarchy/HierarchyCanvas';
+import { HierarchyErrorBoundary } from '../components/hierarchy/ErrorBoundary';
 import { CollapsibleSection } from '../components/hierarchy/CollapsibleSection';
 import {
   useHierarchyStore,
@@ -583,13 +584,32 @@ const VisualHierarchyPage: React.FC = () => {
 
     try {
       const cleaned = normalizeUplineProducerIdInput(uplineProducerIdDraft);
+      const expectedValue = cleaned.length > 0 ? cleaned : '';
       await updateUplineProducerId(selectedNode.id, cleaned.length > 0 ? cleaned : null);
       setUplineProducerIdSaved(true);
-      // Fix #2: Allow GHL API time to propagate the update before refetching
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-      // Flag so snapshot effect preserves current expansion state
-      isRefreshFromSaveRef.current = true;
-      await fetchSnapshot();
+
+      // Wait for GHL to propagate the change, then hard refresh the page.
+      // Poll the snapshot endpoint every 2s to verify the new value, up to 8 attempts (~16s).
+      const contactId = selectedNode.id;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        try {
+          const fresh = await fetchSnapshotData({ includeOpportunities: true });
+          const found = (function find(nodes: GHLHierarchyNode[]): string | null {
+            for (const n of nodes) {
+              if (n.id === contactId) return (n.raw?.uplineProducerId ?? '').replace(/\D/g, '');
+              const r = find(n.children);
+              if (r !== null) return r;
+            }
+            return null;
+          })(fresh.hierarchy);
+          if (found === expectedValue) break;
+        } catch {
+          // fetch failed — just keep trying
+        }
+      }
+      window.location.reload();
+      return; // reload will stop execution
     } catch (err) {
       setUplineProducerIdError(err instanceof Error ? err.message : 'Failed to update');
     } finally {
@@ -597,7 +617,6 @@ const VisualHierarchyPage: React.FC = () => {
     }
   }, [
     canEditSelectedNodeUplineProducerId,
-    fetchSnapshot,
     selectedNode,
     uplineProducerIdDraft,
     uplineProducerIdSaving,
@@ -1282,6 +1301,10 @@ const VisualHierarchyPage: React.FC = () => {
   const handleGlobalPagination = useCallback(
     (direction: 'next' | 'prev') => {
       if (showAllChildren) return;
+      // Clear per-node overrides so the global page index takes effect everywhere.
+      // Overrides are set by focusNode() to keep a selected node visible, but when
+      // the user explicitly navigates pages, the global index should win.
+      setChildPageOverrides(new Map());
       setChildPageIndex((prev) => {
         if (direction === 'next') {
           return Math.min(prev + 1, Math.max(0, maxChildPages - 1));
@@ -1989,27 +2012,29 @@ const VisualHierarchyPage: React.FC = () => {
 
         <section className="visual-hierarchy-workspace">
           <div className="visual-hierarchy-canvas" ref={canvasRef}>
-            <HierarchyCanvas
-              graph={graph}
-              expandedIds={expandedIds}
-              density={density}
-              focusLens={focusLens}
-              highlightedPath={highlightedPath}
-              selectedNodeId={selectedNodeId}
-              onToggleNode={handleToggleNode}
-              onSelectNode={handleSelectNode}
-              onHoverNode={setHoveredNodeId}
-              hoveredNodeId={hoveredNodeId}
-              depthLimit={depthLimit}
-              scopeRootId={scopeRootId}
-              theme={theme as 'dark' | 'light'}
-              onInit={setReactFlowInstance}
-              childPageIndex={childPageIndex}
-              childrenPageSize={CHILDREN_PAGE_SIZE}
-              showAllChildren={showAllChildren}
-              childPageOverrides={childPageOverrides}
-              focusNonce={focusNonce}
-            />
+            <HierarchyErrorBoundary onReset={fetchSnapshot}>
+              <HierarchyCanvas
+                graph={graph}
+                expandedIds={expandedIds}
+                density={density}
+                focusLens={focusLens}
+                highlightedPath={highlightedPath}
+                selectedNodeId={selectedNodeId}
+                onToggleNode={handleToggleNode}
+                onSelectNode={handleSelectNode}
+                onHoverNode={setHoveredNodeId}
+                hoveredNodeId={hoveredNodeId}
+                depthLimit={depthLimit}
+                scopeRootId={scopeRootId}
+                theme={theme as 'dark' | 'light'}
+                onInit={setReactFlowInstance}
+                childPageIndex={childPageIndex}
+                childrenPageSize={CHILDREN_PAGE_SIZE}
+                showAllChildren={showAllChildren}
+                childPageOverrides={childPageOverrides}
+                focusNonce={focusNonce}
+              />
+            </HierarchyErrorBoundary>
           </div>
           <aside className={`visual-hierarchy-inspector ${selectedNode ? 'is-open' : ''}`}>
             {selectedNode ? (
