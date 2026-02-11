@@ -2196,6 +2196,8 @@ export default async function handler(req, res) {
 
 
 
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
     res.status(200).json(snapshot);
 
   } catch (error) {

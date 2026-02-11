@@ -199,6 +199,16 @@
   color: #1d4ed8;
 }
 
+.node-card__tag--duplicate {
+  background: rgba(248, 113, 113, 0.2);
+  color: #fca5a5;
+}
+
+.visual-hierarchy-page[data-theme='light'] .node-card__tag--duplicate {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .node-card__chip {
   font-size: 0.68rem;
   padding: 2px 8px;

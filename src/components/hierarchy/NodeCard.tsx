@@ -22,6 +22,8 @@ const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
   const showNpnBadge = Boolean(person.npn);
   const showUplineBadge = Boolean(uplineProducerId);
   const showSyntheticBadge = person.sourceNode?.uplineSource === 'synthetic';
+  const duplicateGroupSize = person.duplicateGroupSize ?? 0;
+  const showDuplicateNpnBadge = duplicateGroupSize > 1 || Boolean(person.sourceNode?.issues?.duplicateNpn);
 
   const initials = useMemo(() => {
     const parts = person.name.split(' ').filter(Boolean);
@@ -175,11 +177,16 @@ const NodeCard = memo<NodeProps<NodeCardData>>(({ data }) => {
       <div className="node-card__body">
         <div className="node-card__title-row node-card__title-row--stacked">
           <span className="node-card__name">{person.name}</span>
-          {(showNpnBadge || showUplineBadge || showSyntheticBadge) && (
+          {(showNpnBadge || showUplineBadge || showSyntheticBadge || showDuplicateNpnBadge) && (
             <div className="node-card__badges">
               {showNpnBadge && <span className="node-card__tag">NPN {person.npn}</span>}
               {showUplineBadge && (
                 <span className="node-card__tag node-card__tag--upline">Upline {uplineProducerId}</span>
+              )}
+              {showDuplicateNpnBadge && (
+                <span className="node-card__tag node-card__tag--duplicate">
+                  {duplicateGroupSize > 1 ? `Duplicate NPN (${duplicateGroupSize})` : 'Duplicate NPN'}
+                </span>
               )}
               {showSyntheticBadge && <span className="node-card__tag node-card__tag--synthetic">Synthetic Upline</span>}
             </div>

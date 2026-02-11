@@ -31,6 +31,9 @@ export type PersonNode = {
   metrics: PersonMetrics;
   vendorGroup?: 'equita' | 'quility' | 'combined';
   uplineSource?: GHLHierarchyNode['uplineSource'];
+  duplicateGroupId?: string | null;
+  duplicateGroupNpn?: string | null;
+  duplicateGroupSize?: number;
   sourceNode: GHLHierarchyNode;
 };
 

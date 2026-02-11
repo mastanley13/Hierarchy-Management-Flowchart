@@ -220,10 +220,14 @@ const formatDate = (value?: string | null) => {
 };
 
 const fetchSnapshotData = async (options?: { includeOpportunities?: boolean }): Promise<GHLSnapshot> => {
-  const url = options?.includeOpportunities ? '/api/ghl/snapshot?includeOpportunities=1' : '/api/ghl/snapshot';
+  const cacheBuster = `_t=${Date.now()}`;
+  const url = options?.includeOpportunities
+    ? `/api/ghl/snapshot?includeOpportunities=1&${cacheBuster}`
+    : `/api/ghl/snapshot?${cacheBuster}`;
   const response = await fetch(url, {
     headers: {
       Accept: 'application/json',
+      'Cache-Control': 'no-cache',
     },
   });
 
@@ -271,6 +275,7 @@ const VisualHierarchyPage: React.FC = () => {
   const hydratedExpansionRef = useRef(false);
   const highlightTimeoutRef = useRef<number | null>(null);
   const scopeHydratedRef = useRef(false);
+  const isRefreshFromSaveRef = useRef(false);
   const autoFocusLensRef = useRef(false);
   const depthLimitAutoRef = useRef(false);
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
@@ -327,8 +332,20 @@ const VisualHierarchyPage: React.FC = () => {
     const { graph: builtGraph, parentMap: builtParentMap } = buildHierarchyGraph(snapshot.hierarchy);
     setGraph(builtGraph);
     setParentMap(builtParentMap);
-    hydratedExpansionRef.current = false;
-    scopeHydratedRef.current = false;
+    // Fix #2: When refreshing after a save, preserve current expansion state
+    // instead of resetting to localStorage / expand-all default.
+    if (isRefreshFromSaveRef.current) {
+      isRefreshFromSaveRef.current = false;
+      // Prune any expanded IDs that no longer exist in the new graph
+      const currentExpanded = Array.from(expandedIds).filter((id) => builtGraph.nodesById.has(id));
+      if (currentExpanded.length > 0) {
+        setExpandedIds(currentExpanded);
+      }
+      // Don't reset hydration flags — keep scope and expansion as-is
+    } else {
+      hydratedExpansionRef.current = false;
+      scopeHydratedRef.current = false;
+    }
   }, [snapshot]);
 
   useEffect(() => {
@@ -568,6 +585,10 @@ const VisualHierarchyPage: React.FC = () => {
       const cleaned = normalizeUplineProducerIdInput(uplineProducerIdDraft);
       await updateUplineProducerId(selectedNode.id, cleaned.length > 0 ? cleaned : null);
       setUplineProducerIdSaved(true);
+      // Fix #2: Allow GHL API time to propagate the update before refetching
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // Flag so snapshot effect preserves current expansion state
+      isRefreshFromSaveRef.current = true;
       await fetchSnapshot();
     } catch (err) {
       setUplineProducerIdError(err instanceof Error ? err.message : 'Failed to update');
@@ -597,6 +618,7 @@ const VisualHierarchyPage: React.FC = () => {
         carrierCompanyName: cleaned.length > 0 ? cleaned : null,
       });
       setCarrierCompanyNameSaved(true);
+      isRefreshFromSaveRef.current = true;
       await fetchSnapshot();
     } catch (err) {
       setCarrierCompanyNameError(err instanceof Error ? err.message : 'Failed to update');
@@ -626,6 +648,7 @@ const VisualHierarchyPage: React.FC = () => {
         carrierAgentNumber: cleaned.length > 0 ? cleaned : null,
       });
       setCarrierAgentNumberSaved(true);
+      isRefreshFromSaveRef.current = true;
       await fetchSnapshot();
     } catch (err) {
       setCarrierAgentNumberError(err instanceof Error ? err.message : 'Failed to update');
@@ -2643,7 +2666,55 @@ const buildHierarchyGraph = (
   const parentMap = new Map<string, string | null>();
   const rootIds: string[] = [];
 
-  const visit = (node: GHLHierarchyNode, depth: number, parentId: string | null) => {
+  type DuplicateGroupContext = {
+    id: string;
+    npn: string | null;
+    size: number;
+  };
+
+  const isNpnGroupNode = (node: GHLHierarchyNode) => node.id.startsWith('npn-group:');
+
+  const countGroupMembers = (node: GHLHierarchyNode): number => {
+    if (!Array.isArray(node.children) || node.children.length === 0) return 0;
+    // Group children are typically direct duplicate records; keep this resilient to nested group wrappers.
+    const stack = [...node.children];
+    let count = 0;
+    while (stack.length > 0) {
+      const current = stack.pop();
+      if (!current) continue;
+      if (isNpnGroupNode(current)) {
+        if (Array.isArray(current.children) && current.children.length > 0) {
+          stack.push(...current.children);
+        }
+        continue;
+      }
+      count += 1;
+    }
+    return count;
+  };
+
+  const visit = (
+    node: GHLHierarchyNode,
+    depth: number,
+    parentId: string | null,
+    duplicateGroupContext: DuplicateGroupContext | null = null,
+  ): string[] => {
+    // Flatten synthetic duplicate-NPN grouping cards from the visual graph. Their members inherit
+    // duplicate context and become direct children of the group's parent.
+    if (isNpnGroupNode(node)) {
+      const memberCount = countGroupMembers(node);
+      const nextContext: DuplicateGroupContext = {
+        id: node.id,
+        npn: node.npn ?? null,
+        size: memberCount,
+      };
+      const visibleIds: string[] = [];
+      node.children.forEach((child) => {
+        visibleIds.push(...visit(child, depth, parentId, nextContext));
+      });
+      return visibleIds;
+    }
+
     const status = statusMap[node.status] ?? 'inactive';
     const person: PersonNode = {
       id: node.id,
@@ -2668,6 +2739,9 @@ const buildHierarchyGraph = (
       },
       vendorGroup: node.vendorGroup,
       uplineSource: node.uplineSource,
+      duplicateGroupId: duplicateGroupContext?.id ?? null,
+      duplicateGroupNpn: duplicateGroupContext?.npn ?? null,
+      duplicateGroupSize: duplicateGroupContext?.size ?? 0,
       sourceNode: node,
     };
 
@@ -2677,17 +2751,25 @@ const buildHierarchyGraph = (
       rootIds.push(node.id);
     }
 
+    const childIds: string[] = [];
     node.children.forEach((child) => {
-      visit(child, depth + 1, node.id);
-      person.childrenIds.push(child.id);
-      const childPerson = nodesById.get(child.id);
+      childIds.push(...visit(child, depth + 1, node.id, null));
+    });
+
+    person.childrenIds.push(...childIds);
+    childIds.forEach((childId) => {
+      const childPerson = nodesById.get(childId);
       if (childPerson) {
         person.branchSummary[childPerson.status] += 1;
       }
     });
+
+    return [node.id];
   };
 
-  roots.forEach((root) => visit(root, 0, null));
+  roots.forEach((root) => {
+    visit(root, 0, null, null);
+  });
 
   return {
     graph: {
